@@ -6,6 +6,8 @@ import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 // 文字コードを指定して文字列とデータを変換する機能を読み込みます。
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 // 日付を扱う機能を読み込みます。
 import java.time.LocalDate;
 // Todoを並べて保存する機能を読み込みます。
@@ -24,14 +26,8 @@ public class App {
     public static void main(String[] args) throws Exception {
         // ポート8080（通信の入口番号）でサーバーを用意します。
         HttpServer server = HttpServer.create(new InetSocketAddress(8080), 0);
-        // 起動時のサンプルTodoを追加します。
-        todos.add(new Todo(nextId++, "牛乳を買う", "", ""));
-        // 2件目のサンプルTodoを作ります。
-        Todo egg = new Todo(nextId++, "卵を買う", "", "");
-        // 2件目のサンプルを完了済みにします。
-        egg.setDone(true);
-        // 2件目のサンプルTodoを一覧に加えます。
-        todos.add(egg);
+        // todos.csvからTodoを読み込みます。
+        load();
         // 「/」（トップページ）へのアクセスを処理します。
         server.createContext("/", exchange -> {
             // アクセスされたパス（URLの末尾部分）を取り出します。
@@ -56,6 +52,8 @@ public class App {
                     todos.add(new Todo(nextId, title, dueDate, budget));
                     // 次に使う番号を1つ進めます。
                     nextId++;
+                    // 変更した一覧をtodos.csvへ保存します。
+                    save();
                 }
                 // 戻り先をトップページにします。
                 exchange.getResponseHeaders().set("Location", "/");
@@ -91,6 +89,8 @@ public class App {
                                     todo.setCompletedAmount("");
                                 }
                                 todo.setDone(!todo.isDone());
+                                // 完了状態の変更をtodos.csvへ保存します。
+                                save();
                                 // 一致したTodoの確認を終えます。
                                 break;
                             }
@@ -118,6 +118,8 @@ public class App {
                         int id = Integer.parseInt(query.substring(3));
                         // idが一致するTodoを一覧から削除します。
                         todos.removeIf(todo -> todo.getId() == id);
+                        // 削除後の一覧をtodos.csvへ保存します。
+                        save();
                     // 数字でないidは何もせず受け止めます。
                     } catch (NumberFormatException e) {
                     }
@@ -201,6 +203,36 @@ public class App {
         // 起動したことと停止方法を表示します。
         System.out.println("サーバー起動: http://localhost:8080 （止めるときは Ctrl+C）");
     }
+    // Todo一覧をUTF-8のCSVファイルへ保存します。
+    static void save() throws java.io.IOException {
+        List<String> rows = new ArrayList<>();
+        for (Todo todo : todos) {
+            rows.add(todo.getId() + ",\"" + todo.getTitle().replace("\"", "\"\"") + "\"," + todo.isDone() + ",\"" + todo.getDueDate().replace("\"", "\"\"") + "\",\"" + todo.getBudget().replace("\"", "\"\"") + "\",\"" + todo.getCompletedDate().replace("\"", "\"\"") + "\",\"" + todo.getCompletedAmount().replace("\"", "\"\"") + "\"");
+        }
+        Files.write(Path.of("todos.csv"), rows, StandardCharsets.UTF_8);
+    }
+
+    // UTF-8のCSVファイルからTodo一覧を読み込み、次の番号を決めます。
+    static void load() throws java.io.IOException {
+        Path file = Path.of("todos.csv");
+        if (Files.exists(file)) {
+            for (String row : Files.readAllLines(file, StandardCharsets.UTF_8)) {
+                String[] fields = row.split(",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)", -1);
+                String title = fields[1].replaceAll("^\"|\"$", "").replace("\"\"", "\"");
+                String dueDate = fields[3].replaceAll("^\"|\"$", "").replace("\"\"", "\"");
+                String budget = fields[4].replaceAll("^\"|\"$", "").replace("\"\"", "\"");
+                String completedDate = fields[5].replaceAll("^\"|\"$", "").replace("\"\"", "\"");
+                String completedAmount = fields[6].replaceAll("^\"|\"$", "").replace("\"\"", "\"");
+                Todo todo = new Todo(Integer.parseInt(fields[0]), title, dueDate, budget);
+                todo.setDone(Boolean.parseBoolean(fields[2]));
+                todo.setCompletedDate(completedDate);
+                todo.setCompletedAmount(completedAmount);
+                todos.add(todo);
+                nextId = Math.max(nextId, todo.getId() + 1);
+            }
+        }
+    }
+
 }
 
 // Todo1件の番号・内容・完了状態・予定日・完了日・金額を持つクラスです。
