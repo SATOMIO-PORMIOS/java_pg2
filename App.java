@@ -51,13 +51,66 @@ public class App {
                     // 次に使う番号を1つ進めます。★変更
                     nextId++;
                 }
-                // 戻り先をトップページにします。
+                // 戻り先をトップページにします。★追加
                 exchange.getResponseHeaders().set("Location", "/");
-                // 303でトップページへの移動を伝えます。
+                // 303でトップページへの移動を伝えます。★追加
                 exchange.sendResponseHeaders(303, -1);
-                // 応答を閉じます。
+                // 応答を閉じます。★追加
                 exchange.close();
-                // この分岐の処理を終えます。
+                // この分岐の処理を終えます。★追加
+                return;
+            // GET /doneでTodoを完了にします。★追加
+            } else if (path.equals("/done") && method.equals("GET")) {
+                // URLのクエリ（?の後ろの文字列）を受け取ります。★追加
+                String query = exchange.getRequestURI().getQuery();
+                // idが付いているか確かめます。★追加
+                if (query != null && query.startsWith("id=") && query.length() > 3) {
+                    // 数字のidを取り出します。★追加
+                    try {
+                        int id = Integer.parseInt(query.substring(3));
+                        // Todoを1件ずつ調べます。★追加
+                        for (Todo todo : todos) {
+                            // idが一致したTodoを完了にします。★追加
+                            if (todo.getId() == id) {
+                                todo.setDone(true);
+                                // 一致したTodoの確認を終えます。★追加
+                                break;
+                            }
+                        }
+                    // 数字でないidは何もせず受け止めます。★追加
+                    } catch (NumberFormatException e) {
+                    }
+                }
+                // 戻り先をトップページにします。★追加
+                exchange.getResponseHeaders().set("Location", "/");
+                // 303でトップページへの移動を伝えます。★追加
+                exchange.sendResponseHeaders(303, -1);
+                // 応答を閉じます。★追加
+                exchange.close();
+                // この分岐の処理を終えます。★追加
+                return;
+            // GET /deleteでTodoを削除します。★追加
+            } else if (path.equals("/delete") && method.equals("GET")) {
+                // URLのクエリ（?の後ろの文字列）を受け取ります。★追加
+                String query = exchange.getRequestURI().getQuery();
+                // idが付いているか確かめます。★追加
+                if (query != null && query.startsWith("id=") && query.length() > 3) {
+                    // 数字のidを取り出します。★追加
+                    try {
+                        int id = Integer.parseInt(query.substring(3));
+                        // idが一致するTodoを一覧から削除します。★追加
+                        todos.removeIf(todo -> todo.getId() == id);
+                    // 数字でないidは何もせず受け止めます。★追加
+                    } catch (NumberFormatException e) {
+                    }
+                }
+                // 戻り先をトップページにします。★追加
+                exchange.getResponseHeaders().set("Location", "/");
+                // 303でトップページへの移動を伝えます。★追加
+                exchange.sendResponseHeaders(303, -1);
+                // 応答を閉じます。★追加
+                exchange.close();
+                // この分岐の処理を終えます。★追加
                 return;
             // トップページにフォームとTodo一覧を表示します。★変更
             } else if (path.equals("/")) {
@@ -71,8 +124,8 @@ public class App {
                     if (todo.isDone()) {
                         mark = " ✔";
                     }
-                    // Todoの題名と印を一覧へ足します。★変更
-                    html += "<li>" + todo.getTitle() + mark + "</li>";
+                    // Todoの題名、完了リンク、削除リンクを一覧へ足します。★追加
+                    html += "<li>" + todo.getTitle() + mark + " <a href='/done?id=" + todo.getId() + "'>完了</a> <a href='/delete?id=" + todo.getId() + "'>削除</a></li>";
                 }
                 // Todo一覧のHTMLを閉じます。★変更
                 html += "</ul>";
