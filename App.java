@@ -134,6 +134,7 @@ public class App {
 
                 AuthSession session = requireAuthenticated(exchange);
                 if (session == null) return;
+                if (AccountManagement.handle(exchange, session)) return;
                 if (!"admin".equals(session.role)) {
                     sendHtml(exchange, buildStep9PendingPage(session.csrfToken));
                     return;
@@ -161,7 +162,7 @@ public class App {
                 } else if (path.equals("/")) {
                     // 一覧画面のHTMLとスタイルを作成します。
                     String appTitle = getAppTitle();
-                    String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>" + escapeHtml(appTitle) + "</title><link rel='preconnect' href='https://fonts.googleapis.com'><link rel='preconnect' href='https://fonts.gstatic.com' crossorigin><link href='https://fonts.googleapis.com/css2?family=Yusei+Magic&display=swap' rel='stylesheet'><link rel='stylesheet' href='/assets/app.css'><script src='/assets/app.js' defer></script></head><body><header class='app-header'><h1>" + escapeHtml(appTitle) + "</h1><button type='button' id='appTitleEdit' class='title-edit-button' title='\u30bf\u30a4\u30c8\u30eb\u3092\u5909\u66f4'><img src='/assets/edit.png' alt=''></button><form class='logout-form' action='/logout' method='post'><input type='hidden' name='_csrf' value='" + session.csrfToken + "'><button type='submit'>ログアウト</button></form></header><button type='button' id='newWishButton' class='new-wish-button'>&#65291; &#26032;&#35215;&#36861;&#21152;</button>";
+                    String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>" + escapeHtml(appTitle) + "</title><link rel='preconnect' href='https://fonts.googleapis.com'><link rel='preconnect' href='https://fonts.gstatic.com' crossorigin><link href='https://fonts.googleapis.com/css2?family=Yusei+Magic&display=swap' rel='stylesheet'><link rel='stylesheet' href='/assets/app.css'><script src='/assets/app.js' defer></script></head><body><header class='app-header'><h1>" + escapeHtml(appTitle) + "</h1><button type='button' id='appTitleEdit' class='title-edit-button' title='\u30bf\u30a4\u30c8\u30eb\u3092\u5909\u66f4'><img src='/assets/edit.png' alt=''></button><form class='logout-form' action='/logout' method='post'><input type='hidden' name='_csrf' value='" + session.csrfToken + "'><button type='submit'>ログアウト</button></form></header><nav class='account-nav'><a href='/admin/users'>ユーザー管理</a><a href='/account/password'>パスワード変更</a></nav><button type='button' id='newWishButton' class='new-wish-button'>&#65291; &#26032;&#35215;&#36861;&#21152;</button>";
                     // Todoがない場合の案内を表示します。
                     // Todoがない場合の案内を表示します。
                     loadTodos();
@@ -286,6 +287,7 @@ html += "<li class='note " + (todo.isDone() ? "done" : "pending") + "' style=\"b
         String generatedPassword = null;
         try {
             connection.setAutoCommit(false);
+            AccountManagement.ensureSchema();
             if (!hasTodoColumn("user_id")) {
                 try (Statement migration = connection.createStatement()) {
                     migration.executeUpdate("ALTER TABLE todos ADD COLUMN user_id INTEGER REFERENCES users(id)");
@@ -312,6 +314,9 @@ html += "<li class='note " + (todo.isDone() ? "done" : "pending") + "' style=\"b
                             insertAdmin.setString(3, passwordHash);
                             insertAdmin.setString(4, INITIAL_LIST_TITLE);
                             insertAdmin.executeUpdate();
+                        }
+                        try (Statement forceChange = connection.createStatement()) {
+                            forceChange.executeUpdate("UPDATE users SET must_change_password = 1 WHERE username = 'admin'");
                         }
                         try (PreparedStatement getAdminId = connection.prepareStatement("SELECT id FROM users WHERE username = ?")) {
                             getAdminId.setString(1, "admin");
@@ -667,6 +672,12 @@ html += "<li class='note " + (todo.isDone() ? "done" : "pending") + "' style=\"b
         }
         session.lastSeenAt = now;
         setSessionCookie(exchange, session, SESSION_IDLE_TIMEOUT_MS);
+        String path = exchange.getRequestURI().getPath();
+        if (AccountManagement.mustChangePassword(session.userId)
+                && !path.equals("/account/password") && !path.equals("/logout")) {
+            AccountManagement.redirect(exchange, "/account/password");
+            return null;
+        }
         return session;
     }
 
@@ -764,7 +775,7 @@ html += "<li class='note " + (todo.isDone() ? "done" : "pending") + "' style=\"b
     }
 
     static String buildStep9PendingPage(String csrfToken) {
-        return "<!doctype html><html lang='ja'><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>準備中</title><link rel='stylesheet' href='/assets/app.css'></head><body class='login-page'><main class='login-card'><h1>バケットリスト</h1><p>ユーザー別のWish管理はSTEP 9で有効になります。現在、管理者アカウントでのみ既存リストを利用できます。</p><form action='/logout' method='post'><input type='hidden' name='_csrf' value='" + csrfToken + "'><button type='submit'>ログアウト</button></form></main></body></html>";
+        return "<!doctype html><html lang='ja'><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>準備中</title><link rel='stylesheet' href='/assets/app.css'></head><body class='login-page'><main class='login-card'><h1>バケットリスト</h1><p>ユーザー別のWish管理はSTEP 9で有効になります。現在、管理者アカウントでのみ既存リストを利用できます。</p><p><a href='/account/password'>パスワード変更</a></p><form action='/logout' method='post'><input type='hidden' name='_csrf' value='" + csrfToken + "'><button type='submit'>ログアウト</button></form></main></body></html>";
     }
 
     static void sendHtmlStatus(com.sun.net.httpserver.HttpExchange exchange, int status, String html) throws IOException {

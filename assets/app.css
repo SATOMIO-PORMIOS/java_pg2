@@ -4,3 +4,25 @@
 
 .new-wish-button{padding:10px 16px;border:0;border-radius:999px;background:#8e68bd;color:white;font:inherit;font-weight:700;cursor:pointer}.wish-modal{width:min(560px,calc(100vw - 24px));max-height:min(92vh,900px);overflow:auto;border:0;border-radius:18px;padding:0;color:#55535a;box-shadow:0 16px 60px #21172d66}.wish-modal::backdrop{background:#21172d88;backdrop-filter:blur(3px)}.wish-modal-inner{padding:18px;background:#fff}.wish-modal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}.wish-modal-header h2{margin:0;font-size:21px}.wish-close{border:0;border-radius:50%;width:38px;height:38px;background:#f2edf7;font-size:24px;cursor:pointer}.wish-form label{display:block;margin:11px 0 5px;font-weight:700;font-size:14px}.wish-form input:not([type=checkbox]):not([type=file]),.wish-form select{width:100%;padding:10px;border:1px solid #d2c8db;border-radius:9px;font:inherit;color:#55535a}.wish-form input[type=file]{width:100%;font-size:13px}.wish-preview{height:145px;margin:8px 0;border-radius:12px;background:linear-gradient(145deg,#ffca9a,#a9d9e8 48%,#d4b8e7) center/cover no-repeat}.remove-image-row{font-size:13px!important;font-weight:400!important}.remove-image-row input{width:auto}.completion-fields{margin-top:12px;padding-top:10px;border-top:1px solid #eee5f2}.form-error{display:none;margin:8px 0;padding:9px 11px;border-radius:9px;background:#fff0f1;color:#a32140;font-size:13px}.wish-buttons{display:flex;gap:10px;margin-top:16px}.wish-buttons button{flex:1;padding:11px;border:0;border-radius:10px;font:inherit;font-weight:700;cursor:pointer}.wish-save{background:#9268c5;color:white}.wish-cancel{background:#eee9f2;color:#55535a}.wish-save:disabled{opacity:.65}@media(max-width:520px){.wish-modal-inner{padding:14px}.wish-modal{max-height:95vh}.wish-preview{height:120px}}
 .logout-form{display:inline-flex;margin-left:auto}.logout-form button{border:1px solid #d9cce8;border-radius:999px;background:#fff;color:#55416f;padding:7px 12px;cursor:pointer}.action-icons form{margin:0}.login-page{min-height:100vh;max-width:none;margin:0;padding:24px;display:grid;place-items:center;background:#F4F0FA}.login-card{width:min(100%,420px);padding:28px;border-radius:20px;background:#fff;box-shadow:0 12px 40px #30283a20}.login-card h1{margin-top:0;color:#55416f}.login-card form{display:grid;gap:10px}.login-card label{margin-top:8px}.login-card input{width:100%;min-height:44px;padding:10px 12px;border:1px solid #d9cce8;border-radius:10px;font:inherit}.login-card button{min-height:44px;margin-top:10px;border:0;border-radius:999px;background:#8e68bd;color:#fff;font:inherit;font-weight:700;cursor:pointer}.login-error{padding:10px 12px;border-radius:10px;background:#fff0f2;color:#a52f52}
+
+/* Account management */
+.account-nav { display:flex; flex-wrap:wrap; gap:16px; margin:16px 0; }
+.account-nav a { color:#65428e; }
+.account-page .app-header { flex-wrap:wrap; }
+.account-panel { margin:20px 0; padding:24px; border-radius:16px; background:#fff; box-shadow:0 4px 18px #30283a12; }
+.account-panel h2 { margin-top:0; }
+.account-form { display:grid; gap:14px; max-width:460px; }
+.account-form label { display:grid; gap:6px; }
+.account-form input { width:100%; min-height:44px; padding:10px; border:1px solid #d9cce8; border-radius:8px; font:inherit; }
+.account-page button { min-height:44px; padding:8px 16px; border:1px solid #d9cce8; border-radius:10px; background:#76509f; color:white; font:inherit; cursor:pointer; }
+.account-page :focus-visible { outline:3px solid #7751aa; outline-offset:3px; }
+.account-table-wrap { overflow-x:auto; }
+.account-table { width:100%; border-collapse:collapse; text-align:left; }
+.account-table caption { text-align:left; margin-bottom:12px; }
+.account-table th,.account-table td { padding:14px 10px; border-bottom:1px solid #e9e0f0; vertical-align:top; overflow-wrap:anywhere; }
+.account-table td:last-child { min-width:240px; }
+.account-table details { margin-top:12px; }
+.account-table summary { cursor:pointer; color:#65428e; margin-bottom:10px; }
+.account-display-name { font-weight:normal; }
+.account-notice { padding:14px; border-radius:10px; background:#e6f3e8; color:#285833; }
+@media(max-width:520px) { .account-panel { padding:16px; } .account-page h1 { font-size:24px; } }
