@@ -58,11 +58,9 @@ public class App {
     static final Path UPLOAD_DIR = Path.of("uploads", "wishes").toAbsolutePath().normalize();
     static final Path CATEGORY_IMAGE_DIR = Path.of("assets", "categories").toAbsolutePath().normalize();
     // 画面表示に使うTodo一覧を保持します。
-    static List<Todo> todos = new ArrayList<>();
     static List<Category> categories = new ArrayList<>();
     // SQLiteへの接続を保持します。
     static Connection connection;
-    static int adminUserId;
     static final ConcurrentMap<String, AuthSession> SESSIONS = new ConcurrentHashMap<>();
     static final Map<String, LoginAttempt> LOGIN_ATTEMPTS = new HashMap<>();
 
@@ -135,13 +133,8 @@ public class App {
                 AuthSession session = requireAuthenticated(exchange);
                 if (session == null) return;
                 if (AccountManagement.handle(exchange, session)) return;
-                if (!"admin".equals(session.role)) {
-                    sendHtml(exchange, buildStep9PendingPage(session.csrfToken));
-                    return;
-                }
-
                 if (path.startsWith("/uploads/wishes/")) {
-                    serveImage(exchange, UPLOAD_DIR, path.substring("/uploads/wishes/".length()));
+                    serveWishImage(exchange, session, path.substring("/uploads/wishes/".length()));
                     return;
                 }
 
@@ -161,11 +154,11 @@ public class App {
                     return;
                 } else if (path.equals("/")) {
                     // 一覧画面のHTMLとスタイルを作成します。
-                    String appTitle = getAppTitle();
-                    String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>" + escapeHtml(appTitle) + "</title><link rel='preconnect' href='https://fonts.googleapis.com'><link rel='preconnect' href='https://fonts.gstatic.com' crossorigin><link href='https://fonts.googleapis.com/css2?family=Yusei+Magic&display=swap' rel='stylesheet'><link rel='stylesheet' href='/assets/app.css'><script src='/assets/app.js' defer></script></head><body><header class='app-header'><h1>" + escapeHtml(appTitle) + "</h1><button type='button' id='appTitleEdit' class='title-edit-button' title='\u30bf\u30a4\u30c8\u30eb\u3092\u5909\u66f4'><img src='/assets/edit.png' alt=''></button><form class='logout-form' action='/logout' method='post'><input type='hidden' name='_csrf' value='" + session.csrfToken + "'><button type='submit'>ログアウト</button></form></header><nav class='account-nav'><a href='/admin/users'>ユーザー管理</a><a href='/account/password'>パスワード変更</a></nav><button type='button' id='newWishButton' class='new-wish-button'>&#65291; &#26032;&#35215;&#36861;&#21152;</button>";
+                    String appTitle = getAppTitle(session.userId);
+                    String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>" + escapeHtml(appTitle) + "</title><link rel='preconnect' href='https://fonts.googleapis.com'><link rel='preconnect' href='https://fonts.gstatic.com' crossorigin><link href='https://fonts.googleapis.com/css2?family=Yusei+Magic&display=swap' rel='stylesheet'><link rel='stylesheet' href='/assets/app.css'><script src='/assets/app.js' defer></script></head><body><header class='app-header'><h1>" + escapeHtml(appTitle) + "</h1><button type='button' id='appTitleEdit' class='title-edit-button' title='\u30bf\u30a4\u30c8\u30eb\u3092\u5909\u66f4'><img src='/assets/edit.png' alt=''></button><form class='logout-form' action='/logout' method='post'><input type='hidden' name='_csrf' value='" + session.csrfToken + "'><button type='submit'>ログアウト</button></form></header><nav class='account-nav'>" + (AccountManagement.isAdmin(session.userId) ? "<a href='/admin/users'>ユーザー管理</a>" : "") + "<a href='/account/password'>パスワード変更</a></nav><button type='button' id='newWishButton' class='new-wish-button'>&#65291; &#26032;&#35215;&#36861;&#21152;</button>";
                     // Todoがない場合の案内を表示します。
                     // Todoがない場合の案内を表示します。
-                    loadTodos();
+                    List<Todo> todos = loadTodos(session.userId);
                     if (todos.isEmpty()) { html += "<p>\u307e\u3060\u9805\u76ee\u304c\u3042\u308a\u307e\u305b\u3093\u3002\u65b0\u898f\u8ffd\u52a0\u304b\u3089\u767b\u9332\u3057\u3066\u304f\u3060\u3055\u3044\u3002</p>"; }
                     // 達成数と未完了予算を集計します。
                     int completedCount = 0;
@@ -333,11 +326,21 @@ html += "<li class='note " + (todo.isDone() ? "done" : "pending") + "' style=\"b
                 assignExisting.setInt(1, resolvedAdminId);
                 assignExisting.executeUpdate();
             }
+            try (Statement migration = connection.createStatement()) {
+                migration.executeUpdate("CREATE INDEX IF NOT EXISTS todos_user_id_idx ON todos(user_id)");
+                migration.executeUpdate("CREATE TABLE IF NOT EXISTS app_migrations (name TEXT PRIMARY KEY)");
+                if (migration.executeUpdate("INSERT OR IGNORE INTO app_migrations(name) VALUES ('step9-list-title')") == 1
+                        && Files.isRegularFile(APP_TITLE_FILE)) {
+                    String legacyTitle = Files.readString(APP_TITLE_FILE, StandardCharsets.UTF_8).trim();
+                    if (!legacyTitle.isEmpty()) try (PreparedStatement title = connection.prepareStatement("UPDATE users SET list_title = ? WHERE id = ?")) {
+                        title.setString(1, legacyTitle); title.setInt(2, resolvedAdminId); title.executeUpdate();
+                    }
+                }
+            }
             try (Statement check = connection.createStatement(); ResultSet violations = check.executeQuery("PRAGMA foreign_key_check")) {
                 if (violations.next()) throw new SQLException("Foreign key validation failed for migrated data.");
             }
             connection.commit();
-            adminUserId = resolvedAdminId;
         } catch (Exception e) {
             connection.rollback();
             throw e;
@@ -380,9 +383,10 @@ html += "<li class='note " + (todo.isDone() ? "done" : "pending") + "' style=\"b
     }
 
     // SQLiteからTodo一覧を読み込む処理です。
-    static void loadTodos() throws SQLException {
-        todos.clear();
-        try (PreparedStatement statement = connection.prepareStatement("SELECT t.id, t.title, t.done, t.due_date, t.budget, t.completed_date, t.completed_amount, t.category_id, t.image_path, c.name AS category_name FROM todos t LEFT JOIN categories c ON c.id = t.category_id ORDER BY t.done ASC, t.id ASC")) {
+    static List<Todo> loadTodos(int userId) throws SQLException {
+        List<Todo> todos = new ArrayList<>();
+        try (PreparedStatement statement = connection.prepareStatement("SELECT t.id, t.title, t.done, t.due_date, t.budget, t.completed_date, t.completed_amount, t.category_id, t.image_path, c.name AS category_name FROM todos t LEFT JOIN categories c ON c.id = t.category_id WHERE t.user_id = ? ORDER BY t.done ASC, t.id ASC")) {
+            statement.setInt(1, userId);
             try (ResultSet result = statement.executeQuery()) {
                 while (result.next()) {
                     String budget = result.getString("budget");
@@ -398,6 +402,7 @@ html += "<li class='note " + (todo.isDone() ? "done" : "pending") + "' style=\"b
                 }
             }
         }
+        return todos;
     }
 
     static void loadCategories() throws SQLException {
@@ -415,27 +420,22 @@ html += "<li class='note " + (todo.isDone() ? "done" : "pending") + "' style=\"b
         }
     }
 
-    static Todo findTodo(int id) {
-        for (Todo todo : todos) if (todo.getId() == id) return todo;
-        return null;
-    }
-
     static String escapeHtml(String value) {
         if (value == null) return "";
         return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&#39;");
     }
 
-    static String getAppTitle() {
-        try {
-            if (Files.isRegularFile(APP_TITLE_FILE)) {
-                String title = Files.readString(APP_TITLE_FILE, StandardCharsets.UTF_8).trim();
-                if (!title.isEmpty()) return title;
+    static String getAppTitle(int userId) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("SELECT list_title FROM users WHERE id = ?")) {
+            statement.setInt(1, userId);
+            try (ResultSet row = statement.executeQuery()) {
+                if (row.next() && row.getString(1) != null && !row.getString(1).isBlank()) return row.getString(1);
             }
-        } catch (IOException ignored) { }
+        }
         return DEFAULT_APP_TITLE;
     }
 
-    static void saveAppTitle(com.sun.net.httpserver.HttpExchange exchange, AuthSession session) throws IOException {
+    static void saveAppTitle(com.sun.net.httpserver.HttpExchange exchange, AuthSession session) throws IOException, SQLException {
         byte[] body;
         try { body = readLimited(exchange.getRequestBody(), 4096); }
         catch (IOException e) { sendText(exchange, 413, "\u30bf\u30a4\u30c8\u30eb\u304c\u9577\u3059\u304e\u307e\u3059"); return; }
@@ -449,7 +449,9 @@ html += "<li class='note " + (todo.isDone() ? "done" : "pending") + "' style=\"b
             }
         }
         if (title.isEmpty() || title.length() > 80) { sendText(exchange, 400, "\u30bf\u30a4\u30c8\u30eb\u306f1\u301c80\u6587\u5b57\u3067\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044"); return; }
-        Files.writeString(APP_TITLE_FILE, title, StandardCharsets.UTF_8);
+        try (PreparedStatement statement = connection.prepareStatement("UPDATE users SET list_title = ? WHERE id = ?")) {
+            statement.setString(1, title); statement.setInt(2, session.userId); statement.executeUpdate();
+        }
         if ("XMLHttpRequest".equals(exchange.getRequestHeaders().getFirst("X-Requested-With"))) {
             exchange.sendResponseHeaders(204, -1); exchange.close();
         } else redirectHome(exchange);
@@ -491,7 +493,7 @@ html += "<li class='note " + (todo.isDone() ? "done" : "pending") + "' style=\"b
             if (!idText.matches("[0-9]{1,10}")) { sendText(exchange, 400, "\u5165\u529b\u5185\u5bb9\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044"); return; }
             try { id = Integer.parseInt(idText); } catch (NumberFormatException e) { sendText(exchange, 400, "\u5165\u529b\u5185\u5bb9\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044"); return; }
         }
-        if (title == null || title.trim().isEmpty()) { sendText(exchange, 400, "\u5165\u529b\u5185\u5bb9\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044"); return; }
+        if (title == null || title.trim().isEmpty() || title.length() > 500) { sendText(exchange, 400, "\u5165\u529b\u5185\u5bb9\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044"); return; }
         int categoryId;
         try { categoryId = categoryText == null || categoryText.isBlank() ? getOtherCategoryId() : Integer.parseInt(categoryText); }
         catch (Exception e) { sendText(exchange, 400, "\u5165\u529b\u5185\u5bb9\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044"); return; }
@@ -515,8 +517,9 @@ html += "<li class='note " + (todo.isDone() ? "done" : "pending") + "' style=\"b
 
         String oldPath = null;
         if (editing) {
-            try (PreparedStatement select = connection.prepareStatement("SELECT image_path FROM todos WHERE id = ?")) {
+            try (PreparedStatement select = connection.prepareStatement("SELECT image_path FROM todos WHERE id = ? AND user_id = ?")) {
                 select.setInt(1, id);
+                select.setInt(2, session.userId);
                 try (ResultSet row = select.executeQuery()) { if (!row.next()) { sendText(exchange, 404, "\u9805\u76ee\u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093"); return; } oldPath = row.getString(1); }
             }
         }
@@ -537,7 +540,7 @@ html += "<li class='note " + (todo.isDone() ? "done" : "pending") + "' style=\"b
             if (temp != null) { Files.move(temp, destination, StandardCopyOption.ATOMIC_MOVE); moved = true; }
             boolean done = editing && !completedDate.isBlank();
             String sql = editing
-                ? "UPDATE todos SET title=?, category_id=?, due_date=?, budget=?, done=?, completed_date=?, completed_amount=?, image_path=? WHERE id=?"
+                ? "UPDATE todos SET title=?, category_id=?, due_date=?, budget=?, done=?, completed_date=?, completed_amount=?, image_path=? WHERE id=? AND user_id=?"
                 : "INSERT INTO todos (title, done, due_date, budget, completed_date, completed_amount, category_id, image_path, user_id) VALUES (?,0,?,?,NULL,NULL,?,?,?)";
             try (PreparedStatement statement = connection.prepareStatement(sql)) {
                 statement.setString(1, title.trim());
@@ -549,13 +552,14 @@ html += "<li class='note " + (todo.isDone() ? "done" : "pending") + "' style=\"b
                     if (completedAmount == null) statement.setNull(7, Types.INTEGER); else statement.setLong(7, completedAmount);
                     if (newPath == null) statement.setNull(8, Types.VARCHAR); else statement.setString(8, newPath);
                     statement.setInt(9, id);
+                    statement.setInt(10, session.userId);
                     if (statement.executeUpdate() != 1) throw new SQLException("item update failed");
                 } else {
                     statement.setString(2, dueDate);
                     if (budget == null) statement.setNull(3, Types.INTEGER); else statement.setLong(3, budget);
                     statement.setInt(4, categoryId);
                     if (newPath == null) statement.setNull(5, Types.VARCHAR); else statement.setString(5, newPath);
-                    statement.setInt(6, adminUserId);
+                    statement.setInt(6, session.userId);
                     statement.executeUpdate();
                 }
             }
@@ -774,10 +778,6 @@ html += "<li class='note " + (todo.isDone() ? "done" : "pending") + "' style=\"b
         return "<!doctype html><html lang='ja'><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>ログイン</title><link rel='stylesheet' href='/assets/app.css'></head><body class='login-page'><main class='login-card'><h1>バケットリスト</h1><h2>ログイン</h2>" + (error.isEmpty() ? "" : "<p class='login-error' role='alert'>" + escapeHtml(error) + "</p>") + "<form method='post' action='/login'><input type='hidden' name='_csrf' value='" + csrf + "'><label for='username'>ユーザーID</label><input id='username' name='username' autocomplete='username' maxlength='100' required autofocus><label for='password'>パスワード</label><input id='password' name='password' type='password' autocomplete='current-password' maxlength='1024' required><button type='submit'>ログイン</button></form></main></body></html>";
     }
 
-    static String buildStep9PendingPage(String csrfToken) {
-        return "<!doctype html><html lang='ja'><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>準備中</title><link rel='stylesheet' href='/assets/app.css'></head><body class='login-page'><main class='login-card'><h1>バケットリスト</h1><p>ユーザー別のWish管理はSTEP 9で有効になります。現在、管理者アカウントでのみ既存リストを利用できます。</p><p><a href='/account/password'>パスワード変更</a></p><form action='/logout' method='post'><input type='hidden' name='_csrf' value='" + csrfToken + "'><button type='submit'>ログアウト</button></form></main></body></html>";
-    }
-
     static void sendHtmlStatus(com.sun.net.httpserver.HttpExchange exchange, int status, String html) throws IOException {
         byte[] bytes = html.getBytes(StandardCharsets.UTF_8); exchange.getResponseHeaders().set("Content-Type", "text/html; charset=UTF-8"); exchange.getResponseHeaders().set("Cache-Control", "no-store"); exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff"); exchange.sendResponseHeaders(status, bytes.length); exchange.getResponseBody().write(bytes); exchange.close();
     }
@@ -788,8 +788,14 @@ html += "<li class='note " + (todo.isDone() ? "done" : "pending") + "' style=\"b
         if (!verifyCsrf(exchange, session, form.get("_csrf"))) return;
         int id; try { id = Integer.parseInt(form.getOrDefault("id", "")); if (id < 1) throw new NumberFormatException(); } catch (NumberFormatException e) { sendText(exchange, 400, "Invalid item."); return; }
         String oldImagePath = null;
-        try (PreparedStatement select = connection.prepareStatement("SELECT image_path FROM todos WHERE id = ?")) { select.setInt(1, id); try (ResultSet row = select.executeQuery()) { if (row.next()) oldImagePath = row.getString(1); else { redirectHome(exchange); return; } } }
-        try (PreparedStatement delete = connection.prepareStatement("DELETE FROM todos WHERE id = ?")) { delete.setInt(1, id); delete.executeUpdate(); }
+        try (PreparedStatement select = connection.prepareStatement("SELECT image_path FROM todos WHERE id = ? AND user_id = ?")) {
+            select.setInt(1, id); select.setInt(2, session.userId);
+            try (ResultSet row = select.executeQuery()) { if (row.next()) oldImagePath = row.getString(1); else { sendText(exchange, 404, "項目が見つかりません"); return; } }
+        }
+        try (PreparedStatement delete = connection.prepareStatement("DELETE FROM todos WHERE id = ? AND user_id = ?")) {
+            delete.setInt(1, id); delete.setInt(2, session.userId);
+            if (delete.executeUpdate() != 1) { sendText(exchange, 404, "項目が見つかりません"); return; }
+        }
         deleteStoredImage(oldImagePath); redirectHome(exchange);
     }
 
@@ -807,10 +813,26 @@ html += "<li class='note " + (todo.isDone() ? "done" : "pending") + "' style=\"b
         return "";
     }
 
+    static void serveWishImage(com.sun.net.httpserver.HttpExchange exchange, AuthSession session, String filename) throws IOException, SQLException {
+        exchange.getResponseHeaders().set("Cache-Control", "private, no-store");
+        if (!exchange.getRequestMethod().equals("GET")) {
+            exchange.getResponseHeaders().set("Allow", "GET");
+            sendText(exchange, 405, "Method not allowed."); return;
+        }
+        if (!filename.matches("[a-f0-9-]+\\.(jpg|png|webp)")) { exchange.sendResponseHeaders(404, -1); exchange.close(); return; }
+        try (PreparedStatement statement = connection.prepareStatement("SELECT 1 FROM todos WHERE image_path = ? AND user_id = ?")) {
+            statement.setString(1, "uploads/wishes/" + filename); statement.setInt(2, session.userId);
+            try (ResultSet row = statement.executeQuery()) {
+                if (!row.next()) { exchange.sendResponseHeaders(404, -1); exchange.close(); return; }
+            }
+        }
+        serveImage(exchange, UPLOAD_DIR, filename);
+    }
+
     static void serveImage(com.sun.net.httpserver.HttpExchange exchange, Path base, String filename) throws IOException {
         if (!filename.matches("[a-zA-Z0-9_-]+\\.(jpg|png|webp)")) { exchange.sendResponseHeaders(404, -1); exchange.close(); return; }
         Path file = base.resolve(filename).normalize();
-        if (!file.startsWith(base) || !Files.isRegularFile(file) || Files.size(file) > MAX_IMAGE_BYTES) { exchange.sendResponseHeaders(404, -1); exchange.close(); return; }
+        if (!file.startsWith(base) || !Files.isRegularFile(file) || Files.isSymbolicLink(file) || Files.size(file) > MAX_IMAGE_BYTES) { exchange.sendResponseHeaders(404, -1); exchange.close(); return; }
         String type = filename.endsWith(".jpg") ? "image/jpeg" : filename.endsWith(".png") ? "image/png" : "image/webp";
         exchange.getResponseHeaders().set("Content-Type", type);
         exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
@@ -865,8 +887,13 @@ html += "<li class='note " + (todo.isDone() ? "done" : "pending") + "' style=\"b
         return null;
     }
 
-    static void deleteStoredImage(String relative) throws IOException {
+    // Call only with a previous image path selected through an owner-scoped Wish query.
+    static void deleteStoredImage(String relative) throws IOException, SQLException {
         if (relative == null || !relative.matches("uploads/wishes/[a-f0-9-]+\\.(jpg|png|webp)")) return;
+        try (PreparedStatement statement = connection.prepareStatement("SELECT 1 FROM todos WHERE image_path = ? LIMIT 1")) {
+            statement.setString(1, relative);
+            try (ResultSet row = statement.executeQuery()) { if (row.next()) return; }
+        }
         Path file = Path.of(relative).toAbsolutePath().normalize(); if (file.startsWith(UPLOAD_DIR)) Files.deleteIfExists(file);
     }
 
