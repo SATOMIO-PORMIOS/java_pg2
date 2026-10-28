@@ -95,6 +95,7 @@ public class App {
             if (!hasImagePath) imageSchema.executeUpdate("ALTER TABLE todos ADD COLUMN image_path TEXT");
         }
         ensureUserSchema();
+        WishDetails.ensureSchema(connection);
         Files.createDirectories(UPLOAD_DIR);
         Files.createDirectories(CATEGORY_IMAGE_DIR);
         loadCategories();
@@ -158,7 +159,9 @@ public class App {
                     String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>" + escapeHtml(appTitle) + "</title><link rel='preconnect' href='https://fonts.googleapis.com'><link rel='preconnect' href='https://fonts.gstatic.com' crossorigin><link href='https://fonts.googleapis.com/css2?family=Yusei+Magic&display=swap' rel='stylesheet'><link rel='stylesheet' href='/assets/app.css'><script src='/assets/app.js' defer></script></head><body><header class='app-header'><h1>" + escapeHtml(appTitle) + "</h1><button type='button' id='appTitleEdit' class='title-edit-button' title='\u30bf\u30a4\u30c8\u30eb\u3092\u5909\u66f4'><img src='/assets/edit.png' alt=''></button><form class='logout-form' action='/logout' method='post'><input type='hidden' name='_csrf' value='" + session.csrfToken + "'><button type='submit'>ログアウト</button></form></header><nav class='account-nav'>" + (AccountManagement.isAdmin(session.userId) ? "<a href='/admin/users'>ユーザー管理</a>" : "") + "<a href='/account/password'>パスワード変更</a></nav><button type='button' id='newWishButton' class='new-wish-button'>&#65291; &#26032;&#35215;&#36861;&#21152;</button>";
                     // Todoがない場合の案内を表示します。
                     // Todoがない場合の案内を表示します。
-                    List<Todo> todos = loadTodos(session.userId);
+                    String filterQuery = exchange.getRequestURI().getRawQuery();
+                    boolean sortByPriority = "priority".equals(parseForm(filterQuery == null ? "" : filterQuery).get("sort"));
+                    List<Todo> todos = loadTodos(session.userId, sortByPriority);
                     if (todos.isEmpty()) { html += "<p>\u307e\u3060\u9805\u76ee\u304c\u3042\u308a\u307e\u305b\u3093\u3002\u65b0\u898f\u8ffd\u52a0\u304b\u3089\u767b\u9332\u3057\u3066\u304f\u3060\u3055\u3044\u3002</p>"; }
                     // 達成数と未完了予算を集計します。
                     int completedCount = 0;
@@ -168,7 +171,6 @@ public class App {
                         else if (!todo.getBudget().isEmpty()) { pendingBudgetTotal += Long.parseLong(todo.getBudget()); }
                     }
                     int completionPercent = todos.isEmpty() ? 0 : completedCount * 100 / todos.size();
-                    String filterQuery = exchange.getRequestURI().getQuery();
                     List<String> selectedCategoryIds = new ArrayList<>();
                     List<String> selectedStatuses = new ArrayList<>();
                     if (filterQuery != null) for (String parameter : filterQuery.split("&")) {
@@ -176,7 +178,7 @@ public class App {
                         else if (parameter.startsWith("status=")) selectedStatuses.add(URLDecoder.decode(parameter.substring(7), StandardCharsets.UTF_8));
                     }
                     html += "<div class='list-content'><section class='progress-summary' aria-label='\u9054\u6210\u7387'><div class='progress-label'><span>\u9054\u6210\u7387</span><span>" + completionPercent + "%</span></div><div class='progress-track' role='progressbar' aria-valuenow='" + completionPercent + "' aria-valuemin='0' aria-valuemax='100' aria-label='\u9054\u6210\u7387'><div class='progress-fill' style='width: " + completionPercent + "%'></div></div><p>\u672a\u5b8c\u4e86\u306e\u4e88\u7b97\u5408\u8a08: " + String.format("%,d", pendingBudgetTotal) + "\u5186</p></section>";
-                    html += "<form class='category-filters' method='get' action='/'><span class='filter-title'>\u72b6\u614b\u3067\u7d5e\u308a\u8fbc\u307f</span><label class='category-filter'><input type='checkbox' name='status' value='done' " + (selectedStatuses.contains("done") ? "checked" : "") + " onchange='this.form.submit()'><span>\u9054\u6210</span></label><label class='category-filter'><input type='checkbox' name='status' value='pending' " + (selectedStatuses.contains("pending") ? "checked" : "") + " onchange='this.form.submit()'><span>\u672a\u9054\u6210</span></label><span class='filter-title'>\u30ab\u30c6\u30b4\u30ea\u30fc\u3067\u7d5e\u308a\u8fbc\u307f</span><a class='filter-clear' href='/'>\u3059\u3079\u3066</a>";
+                    html += "<form class='category-filters' method='get' action='/'><label class='priority-sort'>並び順 <select name='sort' onchange='this.form.submit()'><option value=''>既定順</option><option value='priority'" + (sortByPriority ? " selected" : "") + ">優先度の高い順</option></select></label><span class='filter-title'>\u72b6\u614b\u3067\u7d5e\u308a\u8fbc\u307f</span><label class='category-filter'><input type='checkbox' name='status' value='done' " + (selectedStatuses.contains("done") ? "checked" : "") + " onchange='this.form.submit()'><span>\u9054\u6210</span></label><label class='category-filter'><input type='checkbox' name='status' value='pending' " + (selectedStatuses.contains("pending") ? "checked" : "") + " onchange='this.form.submit()'><span>\u672a\u9054\u6210</span></label><span class='filter-title'>\u30ab\u30c6\u30b4\u30ea\u30fc\u3067\u7d5e\u308a\u8fbc\u307f</span><a class='filter-clear' href='/'>\u3059\u3079\u3066</a>";
                     for (Category category : categories) html += "<label class='category-filter'><input type='checkbox' name='categoryId' value='" + category.id + "' " + (selectedCategoryIds.contains(String.valueOf(category.id)) ? "checked" : "") + " onchange='this.form.submit()'><span>" + escapeHtml(category.name) + "</span></label>";
                     html += "</form>" + buildTitleDialog(appTitle, session.csrfToken) + buildWishModal(session.csrfToken) + "<ul class='todo-list'>";
                     // カードに表示する連番を初期化します。
@@ -195,7 +197,7 @@ public class App {
                         // 予算の表示文字列を作成します。
                         String budgetText = todo.getBudget().isEmpty() ? "\u672a\u8a2d\u5b9a" : String.format("%,d", Long.parseLong(todo.getBudget())) + "\u5186";
                         String backgroundUrl = getBackgroundUrl(todo);
-html += "<li class='note " + (todo.isDone() ? "done" : "pending") + "' style=\"background-image: linear-gradient(0deg, rgba(25,20,35,.18), rgba(25,20,35,.04)), url('" + backgroundUrl + "')\"><div class='note-panel'><div class='note-heading'><h2 class='note-title'>" + number + ". " + escapeHtml(todo.getTitle()) + "</h2>" + (todo.isDone() ? "<span class='done-mark'>✓ 達成！</span>" : "") + "</div><span class='category-label'>" + escapeHtml(todo.getCategoryName()) + "</span><div class='note-details'>予定日: " + escapeHtml(todo.getDueDate()) + "<br>予算: " + budgetText + completedText + "</div><div class='note-actions'><span class='note-id'>ID " + todo.getId() + "</span><div class='action-icons'><button type='button' title='編集' aria-label='編集' class='delete-icon edit-icon' data-edit-id='" + todo.getId() + "' data-title='" + escapeHtml(todo.getTitle()) + "' data-category-id='" + todo.getCategoryId() + "' data-due-date='" + escapeHtml(todo.getDueDate()) + "' data-budget='" + escapeHtml(todo.getBudget()) + "' data-completed-date='" + escapeHtml(todo.getCompletedDate()) + "' data-completed-amount='" + escapeHtml(todo.getCompletedAmount()) + "' data-image-url='" + escapeHtml(getBackgroundUrl(todo)) + "' data-custom-image='" + (todo.getImagePath() != null ? "true" : "false") + "'><img src='/assets/edit.png' alt='' class='icon-image'></button><form action='/delete' method='post' onsubmit=\"return confirm('この項目を削除してもよろしいですか？');\"><input type='hidden' name='_csrf' value='" + session.csrfToken + "'><input type='hidden' name='id' value='" + todo.getId() + "'><button type='submit' title='削除' aria-label='削除' class='delete-icon'><img src='/assets/trash.png' alt='' class='icon-image'></button></form></div></div></div></li>";
+html += "<li class='note " + (todo.isDone() ? "done" : "pending") + "' style=\"background-image: linear-gradient(0deg, rgba(25,20,35,.18), rgba(25,20,35,.04)), url('" + backgroundUrl + "')\"><div class='note-panel'><div class='note-heading'><h2 class='note-title'>" + number + ". " + escapeHtml(todo.getTitle()) + "</h2>" + (todo.isDone() ? "<span class='done-mark'>✓ 達成！</span>" : "") + "</div><span class='wish-priority-display' aria-label='優先度 " + todo.getPriority() + "：" + priorityLabel(todo.getPriority()) + "'>" + priorityStars(todo.getPriority()) + "</span><span class='category-label'>" + escapeHtml(todo.getCategoryName()) + "</span><div class='note-details'>予定日: " + escapeHtml(todo.getDueDate()) + "<br>予算: " + budgetText + completedText + "</div><div class='note-actions'><span class='note-id'>ID " + todo.getId() + "</span><div class='action-icons'><button type='button' title='編集' aria-label='編集' class='delete-icon edit-icon' data-edit-id='" + todo.getId() + "' data-title='" + escapeHtml(todo.getTitle()) + "' data-category-id='" + todo.getCategoryId() + "' data-due-date='" + escapeHtml(todo.getDueDate()) + "' data-budget='" + escapeHtml(todo.getBudget()) + "' data-completed-date='" + escapeHtml(todo.getCompletedDate()) + "' data-completed-amount='" + escapeHtml(todo.getCompletedAmount()) + "' data-image-url='" + escapeHtml(getBackgroundUrl(todo)) + "' data-custom-image='" + (todo.getImagePath() != null ? "true" : "false") + "' data-location-name='" + escapeHtml(todo.getLocationName()) + "' data-address='" + escapeHtml(todo.getAddress()) + "' data-latitude='" + escapeHtml(todo.getLatitude()) + "' data-longitude='" + escapeHtml(todo.getLongitude()) + "' data-memo='" + escapeHtml(todo.getMemo()) + "' data-priority='" + todo.getPriority() + "'><img src='/assets/edit.png' alt='' class='icon-image'></button><form action='/delete' method='post' onsubmit=\"return confirm('この項目を削除してもよろしいですか？');\"><input type='hidden' name='_csrf' value='" + session.csrfToken + "'><input type='hidden' name='id' value='" + todo.getId() + "'><button type='submit' title='削除' aria-label='削除' class='delete-icon'><img src='/assets/trash.png' alt='' class='icon-image'></button></form></div></div></div></li>";
                         number++;
                     }
                     // カード一覧のHTMLを閉じます。
@@ -383,9 +385,10 @@ html += "<li class='note " + (todo.isDone() ? "done" : "pending") + "' style=\"b
     }
 
     // SQLiteからTodo一覧を読み込む処理です。
-    static List<Todo> loadTodos(int userId) throws SQLException {
+    static List<Todo> loadTodos(int userId, boolean sortByPriority) throws SQLException {
         List<Todo> todos = new ArrayList<>();
-        try (PreparedStatement statement = connection.prepareStatement("SELECT t.id, t.title, t.done, t.due_date, t.budget, t.completed_date, t.completed_amount, t.category_id, t.image_path, c.name AS category_name FROM todos t LEFT JOIN categories c ON c.id = t.category_id WHERE t.user_id = ? ORDER BY t.done ASC, t.id ASC")) {
+        String order = sortByPriority ? "t.priority DESC, t.done ASC, t.id ASC" : "t.done ASC, t.id ASC";
+        try (PreparedStatement statement = connection.prepareStatement("SELECT t.id, t.title, t.done, t.due_date, t.budget, t.completed_date, t.completed_amount, t.category_id, t.image_path, t.location_name, t.address, t.latitude, t.longitude, t.memo, t.priority, c.name AS category_name FROM todos t LEFT JOIN categories c ON c.id = t.category_id WHERE t.user_id = ? ORDER BY " + order)) {
             statement.setInt(1, userId);
             try (ResultSet result = statement.executeQuery()) {
                 while (result.next()) {
@@ -398,6 +401,10 @@ html += "<li class='note " + (todo.isDone() ? "done" : "pending") + "' style=\"b
                     todo.setCompletedAmount(completedAmount == null ? "" : completedAmount);
                     todo.setCategory(result.getInt("category_id"), result.getString("category_name") == null ? "\u305d\u306e\u4ed6" : result.getString("category_name"));
                     todo.setImagePath(result.getString("image_path"));
+                    todo.setDetails(result.getString("location_name"), result.getString("address"),
+                        result.getObject("latitude") == null ? null : result.getDouble("latitude"),
+                        result.getObject("longitude") == null ? null : result.getDouble("longitude"),
+                        result.getString("memo"), result.getInt("priority"));
                     todos.add(todo);
                 }
             }
@@ -467,8 +474,27 @@ html += "<li class='note " + (todo.isDone() ? "done" : "pending") + "' style=\"b
         for (Category category : categories) {
             options.append("<option value='").append(category.id).append("' data-bg='").append(escapeHtml(categoryBackgroundUrl(category.id))).append("'").append(category.id == otherId ? " selected" : "").append(">").append(escapeHtml(category.name)).append("</option>");
         }
-        return "<dialog id='wishModal' class='wish-modal'><div class='wish-modal-inner'><div class='wish-modal-header'><h2 id='wishModalTitle'>\u65b0\u898f\u8ffd\u52a0</h2><button type='button' class='wish-close' id='wishClose' aria-label='\u9589\u3058\u308b'>&#215;</button></div><div id='wishError' class='form-error' role='alert'></div><form id='wishForm' class='wish-form' action='/save' method='post' enctype='multipart/form-data'><input type='hidden' name='_csrf' value='" + csrfToken + "'><input type='hidden' name='id' id='wishId'><label for='wishTitle'>\u30bf\u30a4\u30c8\u30eb</label><input id='wishTitle' name='title' required maxlength='500'><label for='wishCategory'>\u30ab\u30c6\u30b4\u30ea\u30fc</label><select id='wishCategory' name='categoryId'>" + options + "</select><label for='wishDueDate'>\u4e88\u5b9a\u65e5</label><input id='wishDueDate' type='date' name='dueDate'><label for='wishBudget'>\u4e88\u7b97</label><input id='wishBudget' type='number' name='budget' min='0' step='1'><label>\u30b5\u30e0\u30cd\u30a4\u30eb\u753b\u50cf\uff08JPEG\u3001PNG\u3001WebP\u30015MB\u307e\u3067\uff09</label><div id='wishPreview' class='wish-preview'></div><input id='wishImage' type='file' name='image' accept='image/jpeg,image/png,image/webp'><label id='removeImageRow' class='remove-image-row' hidden><input id='removeImage' type='checkbox' name='removeImage' value='on'> \u500b\u5225\u753b\u50cf\u3092\u89e3\u9664\u3057\u3066\u30ab\u30c6\u30b4\u30ea\u30fc\u753b\u50cf\u306b\u623b\u3059</label><section id='completionFields' class='completion-fields' hidden><label for='wishCompletedDate'>\u9054\u6210\u65e5</label><input id='wishCompletedDate' type='date' name='completedDate'><label for='wishCompletedAmount'>\u5b9f\u969b\u306e\u91d1\u984d\uff08\u4efb\u610f\uff09</label><input id='wishCompletedAmount' type='number' name='completedAmount' min='0' step='1'></section><div class='wish-buttons'><button type='button' class='wish-cancel' id='wishCancel'>\u30ad\u30e3\u30f3\u30bb\u30eb</button><button type='submit' class='wish-save' id='wishSave'>\u4fdd\u5b58</button></div></form></div></dialog>";
+        return "<dialog id='wishModal' class='wish-modal'><div class='wish-modal-inner'><div class='wish-modal-header'><h2 id='wishModalTitle'>\u65b0\u898f\u8ffd\u52a0</h2><button type='button' class='wish-close' id='wishClose' aria-label='\u9589\u3058\u308b'>&#215;</button></div><div id='wishError' class='form-error' role='alert'></div><form id='wishForm' class='wish-form' action='/save' method='post' enctype='multipart/form-data'><input type='hidden' name='_csrf' value='" + csrfToken + "'><input type='hidden' name='id' id='wishId'><label for='wishTitle'>\u30bf\u30a4\u30c8\u30eb</label><input id='wishTitle' name='title' required maxlength='500'><label for='wishCategory'>\u30ab\u30c6\u30b4\u30ea\u30fc</label><select id='wishCategory' name='categoryId'>" + options + "</select>" + buildWishDetailsFields() + "<label for='wishDueDate'>\u4e88\u5b9a\u65e5</label><input id='wishDueDate' type='date' name='dueDate'><label for='wishBudget'>\u4e88\u7b97</label><input id='wishBudget' type='number' name='budget' min='0' step='1'><label>\u30b5\u30e0\u30cd\u30a4\u30eb\u753b\u50cf\uff08JPEG\u3001PNG\u3001WebP\u30015MB\u307e\u3067\uff09</label><div id='wishPreview' class='wish-preview'></div><input id='wishImage' type='file' name='image' accept='image/jpeg,image/png,image/webp'><label id='removeImageRow' class='remove-image-row' hidden><input id='removeImage' type='checkbox' name='removeImage' value='on'> \u500b\u5225\u753b\u50cf\u3092\u89e3\u9664\u3057\u3066\u30ab\u30c6\u30b4\u30ea\u30fc\u753b\u50cf\u306b\u623b\u3059</label><section id='completionFields' class='completion-fields' hidden><label for='wishCompletedDate'>\u9054\u6210\u65e5</label><input id='wishCompletedDate' type='date' name='completedDate'><label for='wishCompletedAmount'>\u5b9f\u969b\u306e\u91d1\u984d\uff08\u4efb\u610f\uff09</label><input id='wishCompletedAmount' type='number' name='completedAmount' min='0' step='1'></section><div class='wish-buttons'><button type='button' class='wish-cancel' id='wishCancel'>\u30ad\u30e3\u30f3\u30bb\u30eb</button><button type='submit' class='wish-save' id='wishSave'>\u4fdd\u5b58</button></div></form></div></dialog>";
     }
+    static String buildWishDetailsFields() {
+        StringBuilder fields = new StringBuilder("<div class='wish-extra-fields'><label for='wishLocationName'>場所の名称（任意）</label><input id='wishLocationName' name='locationName' maxlength='120'><label for='wishAddress'>住所（任意）</label><input id='wishAddress' name='address' maxlength='500'><div class='wish-coordinate-fields'><div><label for='wishLatitude'>緯度（任意、-90〜90）</label><input id='wishLatitude' name='latitude' type='number' inputmode='decimal' min='-90' max='90' step='any'></div><div><label for='wishLongitude'>経度（任意、-180〜180）</label><input id='wishLongitude' name='longitude' type='number' inputmode='decimal' min='-180' max='180' step='any'></div></div><label for='wishMemo'>メモ（任意）</label><textarea id='wishMemo' name='memo' rows='4' maxlength='5000'></textarea><fieldset class='wish-priority'><legend>優先度</legend><div class='priority-stars'>");
+        String[] labels = {"低い", "やや低い", "普通", "高い", "最優先"};
+        for (int value = 1; value <= 5; value++) {
+            fields.append("<label class='priority-star' data-value='").append(value).append("'><input type='radio' name='priority' value='").append(value).append("' aria-label='").append(labels[value - 1]).append("（").append(value).append("）'");
+            if (value == 3) fields.append(" checked");
+            fields.append("><span aria-hidden='true'>★</span></label>");
+        }
+        return fields.append("</div><p class='priority-help'>1：低い　2：やや低い　3：普通　4：高い　5：最優先</p></fieldset></div>").toString();
+    }
+
+    static String priorityStars(int value) {
+        return "★".repeat(value) + "☆".repeat(5 - value);
+    }
+
+    static String priorityLabel(int value) {
+        return new String[] {"低い", "やや低い", "普通", "高い", "最優先"}[value - 1];
+    }
+
     static String categoryBackgroundUrl(int categoryId) {
         for (String extension : List.of("jpg", "png", "webp")) {
             Path image = CATEGORY_IMAGE_DIR.resolve(categoryId + "." + extension).normalize();
@@ -486,6 +512,9 @@ html += "<li class='note " + (todo.isDone() ? "done" : "pending") + "' style=\"b
         Map<String, byte[]> parts = parseMultipart(body, boundary.group(1));
         if (!verifyCsrf(exchange, session, partText(parts, "_csrf"))) return;
         String idText = partText(parts, "id"), title = partText(parts, "title");
+        WishDetails details;
+        try { details = WishDetails.parse(parts); }
+        catch (IllegalArgumentException error) { sendText(exchange, 400, "位置情報、メモ、優先度の入力を確認してください。"); return; }
         String categoryText = partText(parts, "categoryId"), dueDate = partText(parts, "dueDate"), budgetText = partText(parts, "budget");
         boolean editing = idText != null && !idText.isBlank();
         int id = 0;
@@ -540,8 +569,8 @@ html += "<li class='note " + (todo.isDone() ? "done" : "pending") + "' style=\"b
             if (temp != null) { Files.move(temp, destination, StandardCopyOption.ATOMIC_MOVE); moved = true; }
             boolean done = editing && !completedDate.isBlank();
             String sql = editing
-                ? "UPDATE todos SET title=?, category_id=?, due_date=?, budget=?, done=?, completed_date=?, completed_amount=?, image_path=? WHERE id=? AND user_id=?"
-                : "INSERT INTO todos (title, done, due_date, budget, completed_date, completed_amount, category_id, image_path, user_id) VALUES (?,0,?,?,NULL,NULL,?,?,?)";
+                ? "UPDATE todos SET title=?, category_id=?, due_date=?, budget=?, done=?, completed_date=?, completed_amount=?, image_path=?, location_name=?, address=?, latitude=?, longitude=?, memo=?, priority=? WHERE id=? AND user_id=?"
+                : "INSERT INTO todos (title, done, due_date, budget, completed_date, completed_amount, category_id, image_path, user_id, location_name, address, latitude, longitude, memo, priority) VALUES (?,0,?,?,NULL,NULL,?,?,?,?,?,?,?,?,?)";
             try (PreparedStatement statement = connection.prepareStatement(sql)) {
                 statement.setString(1, title.trim());
                 if (editing) {
@@ -551,8 +580,9 @@ html += "<li class='note " + (todo.isDone() ? "done" : "pending") + "' style=\"b
                     if (done) statement.setString(6, completedDate); else statement.setNull(6, Types.VARCHAR);
                     if (completedAmount == null) statement.setNull(7, Types.INTEGER); else statement.setLong(7, completedAmount);
                     if (newPath == null) statement.setNull(8, Types.VARCHAR); else statement.setString(8, newPath);
-                    statement.setInt(9, id);
-                    statement.setInt(10, session.userId);
+                    details.bind(statement, 9);
+                    statement.setInt(15, id);
+                    statement.setInt(16, session.userId);
                     if (statement.executeUpdate() != 1) throw new SQLException("item update failed");
                 } else {
                     statement.setString(2, dueDate);
@@ -560,6 +590,7 @@ html += "<li class='note " + (todo.isDone() ? "done" : "pending") + "' style=\"b
                     statement.setInt(4, categoryId);
                     if (newPath == null) statement.setNull(5, Types.VARCHAR); else statement.setString(5, newPath);
                     statement.setInt(6, session.userId);
+                    details.bind(statement, 7);
                     statement.executeUpdate();
                 }
             }
@@ -946,6 +977,12 @@ class Todo {
     private String completedAmount = "";
     private int categoryId;
     private String imagePath;
+    private String locationName;
+    private String address;
+    private Double latitude;
+    private Double longitude;
+    private String memo;
+    private int priority = 3;
     private String categoryName = "\u305d\u306e\u4ed6";
 
     // 各項目の初期値を設定します。
@@ -1007,6 +1044,20 @@ class Todo {
     void setImagePath(String imagePath) { this.imagePath = imagePath; }
     String getCategoryName() { return categoryName; }
     void setCategory(int categoryId, String categoryName) { this.categoryId = categoryId; this.categoryName = categoryName; }
+    String getLocationName() { return locationName == null ? "" : locationName; }
+    String getAddress() { return address == null ? "" : address; }
+    String getLatitude() { return latitude == null ? "" : latitude.toString(); }
+    String getLongitude() { return longitude == null ? "" : longitude.toString(); }
+    String getMemo() { return memo == null ? "" : memo; }
+    int getPriority() { return priority; }
+    void setDetails(String locationName, String address, Double latitude, Double longitude, String memo, int priority) {
+        this.locationName = locationName;
+        this.address = address;
+        this.latitude = latitude;
+        this.longitude = longitude;
+        this.memo = memo;
+        this.priority = priority;
+    }
 
     // 実際の金額を設定します。
     void setCompletedAmount(String completedAmount) {

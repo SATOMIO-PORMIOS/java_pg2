@@ -26,3 +26,20 @@
 .account-display-name { font-weight:normal; }
 .account-notice { padding:14px; border-radius:10px; background:#e6f3e8; color:#285833; }
 @media(max-width:520px) { .account-panel { padding:16px; } .account-page h1 { font-size:24px; } }
+
+/* Optional Wish details and priority */
+.wish-coordinate-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.wish-form textarea { width:100%; min-height:100px; padding:10px; border:1px solid #d2c8db; border-radius:9px; font:inherit; color:#55535a; resize:vertical; }
+.wish-priority { margin:14px 0 0; padding:8px 12px 10px; border:1px solid #d2c8db; border-radius:10px; }
+.wish-priority legend { font-weight:700; font-size:14px; }
+.priority-stars { display:flex; flex-wrap:wrap; gap:3px; }
+.priority-star { position:relative; display:inline-flex!important; align-items:center; justify-content:center; width:44px; height:44px; margin:0!important; cursor:pointer; }
+.wish-form .priority-star input { position:absolute; width:1px!important; height:1px; min-height:0!important; padding:0!important; opacity:0; }
+.priority-star span { color:#bfb4c8; font-size:30px; line-height:1; }
+.priority-star.selected span { color:#e0a600; }
+.priority-star:has(input:focus-visible) { outline:3px solid #76509f; outline-offset:2px; border-radius:8px; }
+.priority-help { margin:6px 0 0; font-size:12px; }
+.priority-sort { display:inline-flex; align-items:center; gap:8px; padding:6px 0; font-size:14px; }
+.priority-sort select { padding:6px 9px; border:1px solid #d9cce8; border-radius:8px; background:#fff; color:#55416f; font:inherit; }
+.wish-priority-display { display:block; color:#b47900; font-size:15px; line-height:1; white-space:nowrap; letter-spacing:1px; }
+@media(max-width:520px) { .wish-coordinate-fields { grid-template-columns:1fr; gap:0; } }
