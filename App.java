@@ -34,6 +34,8 @@ import java.util.List;
 // アプリケーション本体です。
 public class App {
     static final long MAX_IMAGE_BYTES = 5L * 1024 * 1024;
+    static final String DEFAULT_APP_TITLE = "\u3084\u308a\u305f\u3044\u3053\u3068\u30ea\u30b9\u30c8";
+    static final Path APP_TITLE_FILE = Path.of("app-title.txt").toAbsolutePath().normalize();
     static final Path UPLOAD_DIR = Path.of("uploads", "wishes").toAbsolutePath().normalize();
     static final Path CATEGORY_IMAGE_DIR = Path.of("assets", "categories").toAbsolutePath().normalize();
     // 画面表示に使うTodo一覧を保持します。
@@ -89,53 +91,14 @@ public class App {
                     return;
                 }
                 // Todo新規登録のPOSTリクエストを処理します。
-                if (path.equals("/add") && method.equals("POST")) {
-                    // リクエスト本文を読み込みます。
-                    String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-                    // フォームの各入力値を分けます。
-                    String[] values = body.split("&");
-                    // タイトルを取得します。
-                    String title = URLDecoder.decode(values[0].substring(5), StandardCharsets.UTF_8);
-                    // 予定日を取得します。
-                    String dueDate = URLDecoder.decode(values[1].substring(8), StandardCharsets.UTF_8);
-                    // 予算を取得します。
-                    String budget = URLDecoder.decode(values[2].substring(7), StandardCharsets.UTF_8);
-                    String categoryValue = "";
-                    for (String value : values) {
-                        if (value.startsWith("categoryId=")) categoryValue = URLDecoder.decode(value.substring(11), StandardCharsets.UTF_8);
-                    }
-                    int categoryId = categoryValue.isEmpty() ? getOtherCategoryId() : Integer.parseInt(categoryValue);
-                    // タイトルが空でない場合に登録します。
-                    if (!title.isEmpty()) {
-                        try (PreparedStatement statement = connection.prepareStatement("INSERT INTO todos (title, done, due_date, budget, completed_date, completed_amount, category_id) VALUES (?, ?, ?, ?, ?, ?, ?)")) {
-                            statement.setString(1, title);
-                            statement.setInt(2, 0);
-                            statement.setString(3, dueDate);
-                            if (budget.isEmpty()) { statement.setNull(4, Types.INTEGER); } else { statement.setLong(4, Long.parseLong(budget)); }
-                            statement.setString(5, "");
-                            statement.setNull(6, Types.INTEGER);
-                            statement.setInt(7, categoryId);
-                            statement.executeUpdate();
-                        }
-                    }
-                    // 処理後に一覧画面へ戻します。
-                    exchange.getResponseHeaders().set("Location", "/");
-                    // HTTP応答を送信します。
-                    exchange.sendResponseHeaders(303, -1);
-                    // HTTP接続を閉じます。
-                    exchange.close();
-                    // 現在のリクエスト処理を終了します。
+                if (path.equals("/settings/title") && method.equals("POST")) {
+                    saveAppTitle(exchange);
+                    return;
+                } else if ((path.equals("/save") || path.equals("/edit")) && method.equals("POST")) {
+                    saveTodo(exchange);
                     return;
                 } else if (path.equals("/edit") && method.equals("GET")) {
-                    String query = exchange.getRequestURI().getQuery();
-                    String idValue = query != null && query.startsWith("id=") ? query.substring(3) : "";
-                    if (!idValue.matches("[0-9]{1,10}")) { sendText(exchange, 400, "Invalid item id"); return; }
-                    Todo todo = findTodo(Integer.parseInt(idValue));
-                    if (todo == null) { sendText(exchange, 404, "Item not found"); return; }
-                    sendHtml(exchange, buildEditPage(todo));
-                    return;
-                } else if (path.equals("/edit") && method.equals("POST")) {
-                    saveTodoEdit(exchange);
+                    redirectHome(exchange);
                     return;
                 } else if (path.equals("/delete") && method.equals("GET")) {
                     // URLのクエリ文字列を取得します。
@@ -171,9 +134,8 @@ public class App {
                 // 一覧画面を表示します。
                 } else if (path.equals("/")) {
                     // 一覧画面のHTMLとスタイルを作成します。
-                    String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>\u3084\u308a\u305f\u3044\u3053\u3068\u30ea\u30b9\u30c8</title><link rel='preconnect' href='https://fonts.googleapis.com'><link rel='preconnect' href='https://fonts.gstatic.com' crossorigin><link href='https://fonts.googleapis.com/css2?family=Yusei+Magic&display=swap' rel='stylesheet'><style>* { box-sizing: border-box; } body { max-width: 1100px; margin: 20px auto; padding: 0 16px; font-size: 16px; font-family: 'Yusei Magic', 'Courier New', monospace; color: #30283a; } .filter-row { margin: 12px 0; } .category-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0; } .filter-title { flex-basis: 100%; font-weight: 700; } .category-filter input { position: absolute; opacity: 0; pointer-events: none; } .category-filter span, .filter-clear { display: inline-block; padding: 6px 12px; border: 1px solid #d9cce8; border-radius: 999px; background: #fff; color: #55416f; text-decoration: none; cursor: pointer; font-size: 13px; } .category-filter input:checked + span { background: #8e68bd; border-color: #8e68bd; color: #fff; } .filter-clear { background: #f2edf7; } .category-label { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #eee4fa; color: #55416f; font-size: 10px; font-weight: 700; } .progress-summary { margin: 18px 0; padding: 14px 16px; border-radius: 14px; background: #f5f0fa; box-shadow: 0 3px 12px #30283a18; } .progress-label { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; font-weight: 700; } .progress-track { height: 12px; overflow: hidden; border-radius: 999px; background: #ded7e7; } .progress-fill { height: 100%; border-radius: inherit; background: linear-gradient(90deg, #ff8ca8, #a678e2); transition: width 250ms ease; } ul.todo-list { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; } li.note { position: relative; height: 260px; min-width: 0; overflow: hidden; border-radius: 16px; padding: 12px; display: flex; flex-direction: column; justify-content: flex-end; box-shadow: 0 5px 16px #30283a2b; background-color: #f4c7d0; background-image: linear-gradient(145deg, #ffca9a, #a9d9e8 48%, #d4b8e7); background-size: cover; background-position: center; } .note-panel { position: relative; min-width: 0; width: 100%; max-height: 100%; padding: 10px 11px 8px; border-radius: 11px; background: rgba(255,255,255,.82); display: flex; flex-direction: column; gap: 6px; } li.note.done .note-panel { background: rgba(255, 229, 235, .88); } .note-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; min-width: 0; } .note-title { min-width: 0; margin: 0; font-size: 16px; line-height: 1.3; font-weight: 700; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; } .done-mark { flex: 0 0 auto; color: #c63865; font-size: 14px; font-weight: 700; } .note-details { min-width: 0; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; } .note-actions { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 0; min-height: 30px; flex-wrap: wrap; } .icon-image { width: 16px; height: 16px; object-fit: contain; vertical-align: middle; } .edit-icon { background: transparent; } .edit-icon .icon-image { width: 20px; height: 20px; } .delete-icon { display: inline-flex; flex: 0 0 30px; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 50%; background: #ffffffa8; text-decoration: none; transition: transform 150ms ease, background 150ms ease; } .delete-icon:hover { background: #ffc8d5; transform: scale(1.08); } .note-id { font-size: 10px; color: #665d70; } .action-icons { display: flex; align-items: center; gap: 6px; } @media (max-width: 760px) { ul.todo-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } } @media (max-width: 520px) { ul.todo-list { grid-template-columns: 1fr; } }</style></head><body><h1>\u3084\u308a\u305f\u3044\u3053\u3068\u30ea\u30b9\u30c8</h1><form method='post' action='/add'><input name='todo'><input type='date' name='dueDate'><input type='number' name='budget' min='0' step='1' placeholder='\u4e88\u7b97'><select name='categoryId'>";
-                    for (Category category : categories) html += "<option value='" + category.id + "'>" + escapeHtml(category.name) + "</option>";
-                    html += "</select><button>\u8ffd\u52a0</button></form>";
+                    String appTitle = getAppTitle();
+                    String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>" + escapeHtml(appTitle) + "</title><link rel='preconnect' href='https://fonts.googleapis.com'><link rel='preconnect' href='https://fonts.gstatic.com' crossorigin><link href='https://fonts.googleapis.com/css2?family=Yusei+Magic&display=swap' rel='stylesheet'><style>* { box-sizing: border-box; } body { max-width: 1100px; margin: 20px auto; padding: 0 16px; font-size: 16px; font-family: 'Yusei Magic', 'Courier New', monospace; color: #55535a; } .filter-row { margin: 12px 0; } .category-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0; } .filter-title { flex-basis: 100%; font-weight: 700; } .category-filter input { position: absolute; opacity: 0; pointer-events: none; } .category-filter span, .filter-clear { display: inline-block; padding: 6px 12px; border: 1px solid #d9cce8; border-radius: 999px; background: #fff; color: #55416f; text-decoration: none; cursor: pointer; font-size: 13px; } .category-filter input:checked + span { background: #8e68bd; border-color: #8e68bd; color: #fff; } .filter-clear { background: #f2edf7; } .category-label { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #eee4fa; color: #55416f; font-size: 10px; font-weight: 700; } .progress-summary { margin: 18px 0; padding: 14px 16px; border-radius: 14px; background: #f5f0fa; box-shadow: 0 3px 12px #30283a18; } .progress-label { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; font-weight: 700; } .progress-track { height: 12px; overflow: hidden; border-radius: 999px; background: #ded7e7; } .progress-fill { height: 100%; border-radius: inherit; background: linear-gradient(90deg, #ff8ca8, #a678e2); transition: width 250ms ease; } ul.todo-list { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; } li.note { position: relative; height: 260px; min-width: 0; overflow: hidden; border-radius: 16px; padding: 12px; display: flex; flex-direction: column; justify-content: flex-end; box-shadow: 0 5px 16px #30283a2b; background-color: #f4c7d0; background-image: linear-gradient(145deg, #ffca9a, #a9d9e8 48%, #d4b8e7); background-size: cover; background-position: center; } .note-panel { position: relative; min-width: 0; width: 100%; max-height: 100%; padding: 10px 11px 8px; border-radius: 11px; background: rgba(255,255,255,.82); display: flex; flex-direction: column; gap: 6px; } li.note.done .note-panel { background: rgba(255, 229, 235, .88); } .note-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; min-width: 0; } .note-title { min-width: 0; margin: 0; font-size: 16px; line-height: 1.3; font-weight: 700; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; } .done-mark { flex: 0 0 auto; color: #c63865; font-size: 14px; font-weight: 700; } .note-details { min-width: 0; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; } .note-actions { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 0; min-height: 30px; flex-wrap: wrap; } .icon-image { width: 16px; height: 16px; object-fit: contain; vertical-align: middle; } .edit-icon { background: transparent; border: 0; padding: 0; cursor: pointer; } .edit-icon .icon-image { width: 20px; height: 20px; } .delete-icon { display: inline-flex; flex: 0 0 30px; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 50%; background: #ffffffa8; text-decoration: none; transition: transform 150ms ease, background 150ms ease; } .delete-icon:hover { background: #ffc8d5; transform: scale(1.08); } .note-id { font-size: 10px; color: #665d70; } .action-icons { display: flex; align-items: center; gap: 6px; } @media (max-width: 760px) { ul.todo-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } } @media (max-width: 520px) { ul.todo-list { grid-template-columns: 1fr; } }</style></head><body><header class='app-header'><h1>" + escapeHtml(appTitle) + "</h1><button type='button' id='appTitleEdit' class='title-edit-button' title='\u30bf\u30a4\u30c8\u30eb\u3092\u5909\u66f4'><img src='/assets/edit.png' alt=''></button></header><button type='button' id='newWishButton' class='new-wish-button'>&#65291; &#26032;&#35215;&#36861;&#21152;</button>";
                     // Todoがない場合の案内を表示します。
                     // Todoがない場合の案内を表示します。
                     if (todos.isEmpty()) { html += "<p>繧・ｋ縺薙→繧呈爾縺励∪縺励ｇ縺・/p>"; }
@@ -195,7 +157,7 @@ public class App {
                     html += "<div class='list-content'><section class='progress-summary' aria-label='\u9054\u6210\u7387'><div class='progress-label'><span>\u9054\u6210\u7387</span><span>" + completionPercent + "%</span></div><div class='progress-track' role='progressbar' aria-valuenow='" + completionPercent + "' aria-valuemin='0' aria-valuemax='100' aria-label='\u9054\u6210\u7387'><div class='progress-fill' style='width: " + completionPercent + "%'></div></div><p>\u672a\u5b8c\u4e86\u306e\u4e88\u7b97\u5408\u8a08: " + String.format("%,d", pendingBudgetTotal) + "\u5186</p></section>";
                     html += "<form class='category-filters' method='get' action='/'><span class='filter-title'>\u72b6\u614b\u3067\u7d5e\u308a\u8fbc\u307f</span><label class='category-filter'><input type='checkbox' name='status' value='done' " + (selectedStatuses.contains("done") ? "checked" : "") + " onchange='this.form.submit()'><span>\u9054\u6210</span></label><label class='category-filter'><input type='checkbox' name='status' value='pending' " + (selectedStatuses.contains("pending") ? "checked" : "") + " onchange='this.form.submit()'><span>\u672a\u9054\u6210</span></label><span class='filter-title'>\u30ab\u30c6\u30b4\u30ea\u30fc\u3067\u7d5e\u308a\u8fbc\u307f</span><a class='filter-clear' href='/'>\u3059\u3079\u3066</a>";
                     for (Category category : categories) html += "<label class='category-filter'><input type='checkbox' name='categoryId' value='" + category.id + "' " + (selectedCategoryIds.contains(String.valueOf(category.id)) ? "checked" : "") + " onchange='this.form.submit()'><span>" + escapeHtml(category.name) + "</span></label>";
-                    html += "</form><ul class='todo-list'>";
+                    html += "</form>" + buildTitleDialog(appTitle) + buildWishModal() + "<ul class='todo-list'>";
                     // カードに表示する連番を初期化します。
                     int number = 1;
                     for (Todo todo : todos) {
@@ -212,7 +174,7 @@ public class App {
                         // 予算の表示文字列を作成します。
                         String budgetText = todo.getBudget().isEmpty() ? "\u672a\u8a2d\u5b9a" : String.format("%,d", Long.parseLong(todo.getBudget())) + "\u5186";
                         String backgroundUrl = getBackgroundUrl(todo);
-html += "<li class='note " + (todo.isDone() ? "done" : "pending") + "' style=\"background-image: linear-gradient(0deg, rgba(25,20,35,.18), rgba(25,20,35,.04)), url('" + backgroundUrl + "')\"><div class='note-panel'><div class='note-heading'><h2 class='note-title'>" + number + ". " + escapeHtml(todo.getTitle()) + "</h2>" + (todo.isDone() ? "<span class='done-mark'>✓ 達成！</span>" : "") + "</div><span class='category-label'>" + escapeHtml(todo.getCategoryName()) + "</span><div class='note-details'>予定日: " + escapeHtml(todo.getDueDate()) + "<br>予算: " + budgetText + completedText + "</div><div class='note-actions'><span class='note-id'>ID " + todo.getId() + "</span><div class='action-icons'><a href='/edit?id=" + todo.getId() + "' title='編集' aria-label='編集' class='delete-icon edit-icon'><img src='/assets/edit.png' alt='' class='icon-image'></a><a href='/delete?id=" + todo.getId() + "' title='削除' aria-label='削除' class='delete-icon' onclick=\"return confirm('この項目を削除してもよろしいですか？');\"><img src='/assets/trash.png' alt='' class='icon-image'></a></div></div></div></li>";
+html += "<li class='note " + (todo.isDone() ? "done" : "pending") + "' style=\"background-image: linear-gradient(0deg, rgba(25,20,35,.18), rgba(25,20,35,.04)), url('" + backgroundUrl + "')\"><div class='note-panel'><div class='note-heading'><h2 class='note-title'>" + number + ". " + escapeHtml(todo.getTitle()) + "</h2>" + (todo.isDone() ? "<span class='done-mark'>✓ 達成！</span>" : "") + "</div><span class='category-label'>" + escapeHtml(todo.getCategoryName()) + "</span><div class='note-details'>予定日: " + escapeHtml(todo.getDueDate()) + "<br>予算: " + budgetText + completedText + "</div><div class='note-actions'><span class='note-id'>ID " + todo.getId() + "</span><div class='action-icons'><button type='button' title='編集' aria-label='編集' class='delete-icon edit-icon' data-edit-id='" + todo.getId() + "' data-title='" + escapeHtml(todo.getTitle()) + "' data-category-id='" + todo.getCategoryId() + "' data-due-date='" + escapeHtml(todo.getDueDate()) + "' data-budget='" + escapeHtml(todo.getBudget()) + "' data-completed-date='" + escapeHtml(todo.getCompletedDate()) + "' data-completed-amount='" + escapeHtml(todo.getCompletedAmount()) + "' data-image-url='" + escapeHtml(getBackgroundUrl(todo)) + "' data-custom-image='" + (todo.getImagePath() != null ? "true" : "false") + "'><img src='/assets/edit.png' alt='' class='icon-image'></button><a href='/delete?id=" + todo.getId() + "' title='削除' aria-label='削除' class='delete-icon' onclick=\"return confirm('この項目を削除してもよろしいですか？');\"><img src='/assets/trash.png' alt='' class='icon-image'></a></div></div></div></li>";
                         number++;
                     }
                     // カード一覧のHTMLを閉じます。
@@ -319,70 +281,151 @@ html += "<li class='note " + (todo.isDone() ? "done" : "pending") + "' style=\"b
         return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&#39;");
     }
 
-    static String buildEditPage(Todo todo) {
-        StringBuilder options = new StringBuilder();
-        for (Category category : categories) options.append("<option value='").append(category.id).append("'").append(category.id == todo.getCategoryId() ? " selected" : "").append(">").append(escapeHtml(category.name)).append("</option>");
-        String bg = getBackgroundUrl(todo);
-        String imageAction = todo.getImagePath() == null ? "" : "<label><input type='checkbox' name='removeImage' value='on'>個別画像を解除してカテゴリー画像に戻す</label>";
-        return "<!doctype html><html lang='ja'><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>項目を編集</title><style>*{box-sizing:border-box}body{max-width:720px;margin:24px auto;padding:0 16px;font-family:sans-serif;color:#30283a}.edit-card{padding:20px;border-radius:16px;background:#f7f2fa;box-shadow:0 4px 16px #30283a22}label{display:block;margin:12px 0 5px}input,select{width:100%;padding:9px;border:1px solid #cfc6d7;border-radius:8px}input[type=checkbox]{width:auto}.preview{height:180px;margin:12px 0;border-radius:12px;background:#eee center/cover no-repeat;" + (bg.isEmpty() ? "" : "background-image:url('" + bg + "');") + "}.buttons{display:flex;gap:10px;margin-top:20px}.buttons button,.buttons a{padding:10px 18px;border:0;border-radius:9px;background:#9268c5;color:white;text-decoration:none;cursor:pointer}.buttons a{background:#ddd5e6;color:#30283a}</style></head><body><h1>バケットリストを編集</h1><form id='editForm' class='edit-card' method='post' action='/edit' enctype='multipart/form-data'><input type='hidden' name='id' value='" + todo.getId() + "'><label>タイトル</label><input name='title' required maxlength='500' value='" + escapeHtml(todo.getTitle()) + "'><label>カテゴリー</label><select name='categoryId'>" + options + "</select><label>予定日</label><input type='date' name='dueDate' value='" + escapeHtml(todo.getDueDate()) + "'><label>予算</label><input type='number' name='budget' min='0' step='1' value='" + escapeHtml(todo.getBudget()) + "'><label>サムネイル画像（JPEG、PNG、WebP、5MBまで）</label><div class='preview'></div><input type='file' name='image' accept='image/jpeg,image/png,image/webp'>" + imageAction + "<label>達成日（入力すると達成済みになります）</label><input id='completedDate' type='date' name='completedDate' value='" + escapeHtml(todo.getCompletedDate()) + "' data-original='" + escapeHtml(todo.getCompletedDate()) + "'><label>実際の金額（任意）</label><input id='completedAmount' type='number' name='completedAmount' min='0' step='1' value='" + escapeHtml(todo.getCompletedAmount()) + "' " + (todo.getCompletedDate().isEmpty() ? "disabled" : "") + "><div class='buttons'><button type='submit'>保存</button><a href='/'>キャンセル</a></div></form><script>const d=document.getElementById('completedDate'),a=document.getElementById('completedAmount');d.addEventListener('input',()=>a.disabled=!d.value);document.getElementById('editForm').addEventListener('submit',e=>{if(d.dataset.original&&!d.value&&!confirm('達成日を削除すると、実際の金額もクリアされます。続けますか？'))e.preventDefault()});</script></body></html>";
+    static String getAppTitle() {
+        try {
+            if (Files.isRegularFile(APP_TITLE_FILE)) {
+                String title = Files.readString(APP_TITLE_FILE, StandardCharsets.UTF_8).trim();
+                if (!title.isEmpty()) return title;
+            }
+        } catch (IOException ignored) { }
+        return DEFAULT_APP_TITLE;
     }
 
-    static void saveTodoEdit(com.sun.net.httpserver.HttpExchange exchange) throws IOException, SQLException {
+    static void saveAppTitle(com.sun.net.httpserver.HttpExchange exchange) throws IOException {
+        byte[] body;
+        try { body = readLimited(exchange.getRequestBody(), 4096); }
+        catch (IOException e) { sendText(exchange, 413, "\u30bf\u30a4\u30c8\u30eb\u304c\u9577\u3059\u304e\u307e\u3059"); return; }
+        String title = "";
+        for (String pair : new String(body, StandardCharsets.UTF_8).split("&")) {
+            if (pair.startsWith("title=")) {
+                title = URLDecoder.decode(pair.substring(6), StandardCharsets.UTF_8).trim();
+                break;
+            }
+        }
+        if (title.isEmpty() || title.length() > 80) { sendText(exchange, 400, "\u30bf\u30a4\u30c8\u30eb\u306f1\u301c80\u6587\u5b57\u3067\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044"); return; }
+        Files.writeString(APP_TITLE_FILE, title, StandardCharsets.UTF_8);
+        if ("XMLHttpRequest".equals(exchange.getRequestHeaders().getFirst("X-Requested-With"))) {
+            exchange.sendResponseHeaders(204, -1); exchange.close();
+        } else redirectHome(exchange);
+    }
+
+    static String buildTitleDialog(String appTitle) {
+        return "<style>.app-header{display:flex;align-items:center;gap:8px;margin:0 0 6px}.app-header h1{margin:0;color:#55535a}.title-edit-button{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;padding:5px;border:0;border-radius:50%;background:#f1edf5;cursor:pointer}.title-edit-button img{width:18px;height:18px;object-fit:contain}.title-dialog{width:min(420px,calc(100vw - 24px));border:0;border-radius:16px;padding:0;color:#55535a;box-shadow:0 16px 60px #21172d66}.title-dialog::backdrop{background:#21172d88;backdrop-filter:blur(3px)}.title-dialog form{padding:18px}.title-dialog h2{margin:0 0 12px;font-size:19px}.title-dialog label{display:block;margin-bottom:6px}.title-dialog input{width:100%;padding:10px;border:1px solid #d2c8db;border-radius:9px;font:inherit;color:#55535a}.title-dialog-actions{display:flex;gap:10px;margin-top:14px}.title-dialog-actions button{flex:1;padding:10px;border:0;border-radius:9px;font:inherit;cursor:pointer}.title-dialog-save{background:#9268c5;color:white}.title-dialog-cancel{background:#eee9f2;color:#55535a}.title-error{display:none;margin:9px 0;color:#a32140;font-size:13px}</style><dialog id='titleDialog' class='title-dialog'><form id='titleForm'><h2>\u30a2\u30d7\u30ea\u30bf\u30a4\u30c8\u30eb\u306e\u5909\u66f4</h2><label for='appTitleInput'>\u30bf\u30a4\u30c8\u30eb</label><input id='appTitleInput' name='title' value='" + escapeHtml(appTitle) + "' maxlength='80' required><div id='titleError' class='title-error' role='alert'></div><div class='title-dialog-actions'><button type='button' id='titleCancel' class='title-dialog-cancel'>\u30ad\u30e3\u30f3\u30bb\u30eb</button><button type='submit' id='titleSave' class='title-dialog-save'>\u4fdd\u5b58</button></div></form></dialog><script>(()=>{const dialog=document.getElementById('titleDialog'),form=document.getElementById('titleForm'),input=document.getElementById('appTitleInput'),error=document.getElementById('titleError'),save=document.getElementById('titleSave');document.getElementById('appTitleEdit').addEventListener('click',()=>dialog.showModal());document.getElementById('titleCancel').addEventListener('click',()=>dialog.close());form.addEventListener('submit',async e=>{e.preventDefault();if(!form.reportValidity())return;save.disabled=true;error.style.display='none';try{const response=await fetch('/settings/title',{method:'POST',body:new URLSearchParams(new FormData(form)),headers:{'X-Requested-With':'XMLHttpRequest'}});if(response.ok){window.location.reload();return}error.textContent=await response.text();error.style.display='block'}catch(ex){error.textContent='\u4fdd\u5b58\u3067\u304d\u307e\u305b\u3093\u3067\u3057\u305f';error.style.display='block'}finally{save.disabled=false}})})();</script>";
+    }
+    static String buildWishModal() {
+        StringBuilder options = new StringBuilder();
+        int otherId = 0;
+        try { otherId = getOtherCategoryId(); } catch (SQLException ignored) { }
+        for (Category category : categories) {
+            options.append("<option value='").append(category.id).append("' data-bg='").append(escapeHtml(categoryBackgroundUrl(category.id))).append("'").append(category.id == otherId ? " selected" : "").append(">").append(escapeHtml(category.name)).append("</option>");
+        }
+        return "<style>.new-wish-button{padding:10px 16px;border:0;border-radius:999px;background:#8e68bd;color:white;font:inherit;font-weight:700;cursor:pointer}.wish-modal{width:min(560px,calc(100vw - 24px));max-height:min(92vh,900px);overflow:auto;border:0;border-radius:18px;padding:0;color:#55535a;box-shadow:0 16px 60px #21172d66}.wish-modal::backdrop{background:#21172d88;backdrop-filter:blur(3px)}.wish-modal-inner{padding:18px;background:#fff}.wish-modal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}.wish-modal-header h2{margin:0;font-size:21px}.wish-close{border:0;border-radius:50%;width:38px;height:38px;background:#f2edf7;font-size:24px;cursor:pointer}.wish-form label{display:block;margin:11px 0 5px;font-weight:700;font-size:14px}.wish-form input:not([type=checkbox]):not([type=file]),.wish-form select{width:100%;padding:10px;border:1px solid #d2c8db;border-radius:9px;font:inherit;color:#55535a}.wish-form input[type=file]{width:100%;font-size:13px}.wish-preview{height:145px;margin:8px 0;border-radius:12px;background:linear-gradient(145deg,#ffca9a,#a9d9e8 48%,#d4b8e7) center/cover no-repeat}.remove-image-row{font-size:13px!important;font-weight:400!important}.remove-image-row input{width:auto}.completion-fields{margin-top:12px;padding-top:10px;border-top:1px solid #eee5f2}.form-error{display:none;margin:8px 0;padding:9px 11px;border-radius:9px;background:#fff0f1;color:#a32140;font-size:13px}.wish-buttons{display:flex;gap:10px;margin-top:16px}.wish-buttons button{flex:1;padding:11px;border:0;border-radius:10px;font:inherit;font-weight:700;cursor:pointer}.wish-save{background:#9268c5;color:white}.wish-cancel{background:#eee9f2;color:#55535a}.wish-save:disabled{opacity:.65}@media(max-width:520px){.wish-modal-inner{padding:14px}.wish-modal{max-height:95vh}.wish-preview{height:120px}}</style><dialog id='wishModal' class='wish-modal'><div class='wish-modal-inner'><div class='wish-modal-header'><h2 id='wishModalTitle'>\u65b0\u898f\u8ffd\u52a0</h2><button type='button' class='wish-close' id='wishClose' aria-label='\u9589\u3058\u308b'>&#215;</button></div><div id='wishError' class='form-error' role='alert'></div><form id='wishForm' class='wish-form' action='/save' method='post' enctype='multipart/form-data'><input type='hidden' name='id' id='wishId'><label for='wishTitle'>\u30bf\u30a4\u30c8\u30eb</label><input id='wishTitle' name='title' required maxlength='500'><label for='wishCategory'>\u30ab\u30c6\u30b4\u30ea\u30fc</label><select id='wishCategory' name='categoryId'>" + options + "</select><label for='wishDueDate'>\u4e88\u5b9a\u65e5</label><input id='wishDueDate' type='date' name='dueDate'><label for='wishBudget'>\u4e88\u7b97</label><input id='wishBudget' type='number' name='budget' min='0' step='1'><label>\u30b5\u30e0\u30cd\u30a4\u30eb\u753b\u50cf\uff08JPEG\u3001PNG\u3001WebP\u30015MB\u307e\u3067\uff09</label><div id='wishPreview' class='wish-preview'></div><input id='wishImage' type='file' name='image' accept='image/jpeg,image/png,image/webp'><label id='removeImageRow' class='remove-image-row' hidden><input id='removeImage' type='checkbox' name='removeImage' value='on'> \u500b\u5225\u753b\u50cf\u3092\u89e3\u9664\u3057\u3066\u30ab\u30c6\u30b4\u30ea\u30fc\u753b\u50cf\u306b\u623b\u3059</label><section id='completionFields' class='completion-fields' hidden><label for='wishCompletedDate'>\u9054\u6210\u65e5</label><input id='wishCompletedDate' type='date' name='completedDate'><label for='wishCompletedAmount'>\u5b9f\u969b\u306e\u91d1\u984d\uff08\u4efb\u610f\uff09</label><input id='wishCompletedAmount' type='number' name='completedAmount' min='0' step='1'></section><div class='wish-buttons'><button type='button' class='wish-cancel' id='wishCancel'>\u30ad\u30e3\u30f3\u30bb\u30eb</button><button type='submit' class='wish-save' id='wishSave'>\u4fdd\u5b58</button></div></form></div></dialog><script>(()=>{const modal=document.getElementById('wishModal'),form=document.getElementById('wishForm'),title=document.getElementById('wishTitle'),category=document.getElementById('wishCategory'),due=document.getElementById('wishDueDate'),budget=document.getElementById('wishBudget'),image=document.getElementById('wishImage'),preview=document.getElementById('wishPreview'),id=document.getElementById('wishId'),date=document.getElementById('wishCompletedDate'),amount=document.getElementById('wishCompletedAmount'),completion=document.getElementById('completionFields'),error=document.getElementById('wishError'),save=document.getElementById('wishSave'),remove=document.getElementById('removeImage'),removeRow=document.getElementById('removeImageRow');let originalDate='',imageUrl='',hasCustomImage=false,objectUrl='';const categoryBg=()=>category.selectedOptions[0]?.dataset.bg||'';const showImage=url=>{preview.style.backgroundImage=url?`url('${url}')`:'linear-gradient(145deg,#ffca9a,#a9d9e8 48%,#d4b8e7)'};const clearPreview=()=>{if(objectUrl){URL.revokeObjectURL(objectUrl);objectUrl=''}};const resetModal=()=>{form.reset();id.value='';completion.hidden=true;removeRow.hidden=true;remove.checked=false;amount.disabled=true;originalDate='';imageUrl='';hasCustomImage=false;error.style.display='none';error.textContent='';clearPreview();showImage(categoryBg())};const openAdd=()=>{resetModal();document.getElementById('wishModalTitle').textContent='\u65b0\u898f\u8ffd\u52a0';modal.showModal()};document.getElementById('newWishButton').addEventListener('click',openAdd);document.addEventListener('click',e=>{const button=e.target.closest('[data-edit-id]');if(!button)return;resetModal();document.getElementById('wishModalTitle').textContent='\u9805\u76ee\u3092\u7de8\u96c6';id.value=button.dataset.editId;title.value=button.dataset.title;category.value=button.dataset.categoryId;due.value=button.dataset.dueDate;budget.value=button.dataset.budget;date.value=button.dataset.completedDate;amount.value=button.dataset.completedAmount;originalDate=date.value;completion.hidden=false;amount.disabled=!date.value;imageUrl=button.dataset.imageUrl||'';hasCustomImage=button.dataset.customImage==='true';removeRow.hidden=!hasCustomImage;showImage(imageUrl||categoryBg());modal.showModal()});category.addEventListener('change',()=>{if(!image.files.length&&!hasCustomImage)showImage(categoryBg());if(remove.checked)showImage(categoryBg())});image.addEventListener('change',()=>{clearPreview();if(image.files[0]){objectUrl=URL.createObjectURL(image.files[0]);showImage(objectUrl)}else showImage(remove.checked?categoryBg():imageUrl||categoryBg())});remove.addEventListener('change',()=>showImage(remove.checked?categoryBg():imageUrl||categoryBg()));date.addEventListener('change',()=>{if(originalDate&&!date.value&&!confirm('\u9054\u6210\u65e5\u3092\u524a\u9664\u3059\u308b\u3068\u5b9f\u969b\u306e\u91d1\u984d\u3082\u30af\u30ea\u30a2\u3055\u308c\u307e\u3059\u3002\u7d9a\u3051\u307e\u3059\u304b\uff1f')){date.value=originalDate;return}amount.disabled=!date.value;if(!date.value)amount.value=''});const close=()=>{modal.close();resetModal()};document.getElementById('wishClose').addEventListener('click',close);document.getElementById('wishCancel').addEventListener('click',close);modal.addEventListener('click',e=>{if(e.target===modal)close()});modal.addEventListener('cancel',()=>resetModal());form.addEventListener('submit',async e=>{e.preventDefault();if(!form.reportValidity())return;error.style.display='none';save.disabled=true;try{const response=await fetch('/save',{method:'POST',body:new FormData(form),headers:{'X-Requested-With':'XMLHttpRequest'}});if(response.ok){window.location.href='/';return}error.textContent=(await response.text())||'\u4fdd\u5b58\u3067\u304d\u307e\u305b\u3093\u3067\u3057\u305f';error.style.display='block'}catch(ex){error.textContent='\u901a\u4fe1\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002\u5165\u529b\u5185\u5bb9\u3092\u78ba\u8a8d\u3057\u3066\u518d\u5ea6\u304a\u8a66\u3057\u304f\u3060\u3055\u3044';error.style.display='block'}finally{save.disabled=false}})})();</script>";
+    }
+    static String categoryBackgroundUrl(int categoryId) {
+        for (String extension : List.of("jpg", "png", "webp")) {
+            Path image = CATEGORY_IMAGE_DIR.resolve(categoryId + "." + extension).normalize();
+            if (image.startsWith(CATEGORY_IMAGE_DIR) && Files.isRegularFile(image)) return "/assets/categories/" + categoryId + "." + extension;
+        }
+        return "";
+    }
+    static void saveTodo(com.sun.net.httpserver.HttpExchange exchange) throws IOException, SQLException {
         String requestType = exchange.getRequestHeaders().getFirst("Content-Type");
         Matcher boundary = requestType == null ? Pattern.compile("$").matcher("") : Pattern.compile("boundary=\"?([^;\"]+)\"?").matcher(requestType);
-        if (requestType == null || !requestType.toLowerCase().startsWith("multipart/form-data") || !boundary.find()) { sendText(exchange, 400, "編集フォームを読み取れません"); return; }
+        if (requestType == null || !requestType.toLowerCase().startsWith("multipart/form-data") || !boundary.find()) { sendText(exchange, 400, "\u5165\u529b\u5185\u5bb9\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044"); return; }
         byte[] body;
         try { body = readLimited(exchange.getRequestBody(), MAX_IMAGE_BYTES + 128 * 1024); }
-        catch (IOException e) { sendText(exchange, 413, "画像は5MB以下にしてください"); return; }
+        catch (IOException e) { sendText(exchange, 413, "\u753b\u50cf\u306f5MB\u4ee5\u4e0b\u306b\u3057\u3066\u304f\u3060\u3055\u3044"); return; }
         Map<String, byte[]> parts = parseMultipart(body, boundary.group(1));
-        String idText = partText(parts, "id"), title = partText(parts, "title"), categoryText = partText(parts, "categoryId");
-        String dueDate = partText(parts, "dueDate"), budgetText = partText(parts, "budget"), completedDate = partText(parts, "completedDate"), amountText = partText(parts, "completedAmount");
+        String idText = partText(parts, "id"), title = partText(parts, "title");
+        String categoryText = partText(parts, "categoryId"), dueDate = partText(parts, "dueDate"), budgetText = partText(parts, "budget");
+        boolean editing = idText != null && !idText.isBlank();
+        int id = 0;
+        if (editing) {
+            if (!idText.matches("[0-9]{1,10}")) { sendText(exchange, 400, "\u5165\u529b\u5185\u5bb9\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044"); return; }
+            try { id = Integer.parseInt(idText); } catch (NumberFormatException e) { sendText(exchange, 400, "\u5165\u529b\u5185\u5bb9\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044"); return; }
+        }
+        if (title == null || title.trim().isEmpty()) { sendText(exchange, 400, "\u5165\u529b\u5185\u5bb9\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044"); return; }
+        int categoryId;
+        try { categoryId = categoryText == null || categoryText.isBlank() ? getOtherCategoryId() : Integer.parseInt(categoryText); }
+        catch (Exception e) { sendText(exchange, 400, "\u5165\u529b\u5185\u5bb9\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044"); return; }
+        if (categories.stream().noneMatch(c -> c.id == categoryId)) { sendText(exchange, 400, "\u5165\u529b\u5185\u5bb9\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044"); return; }
+        Long budget = parseOptionalAmount(budgetText);
+        if (budgetText != null && !budgetText.isBlank() && budget == null) { sendText(exchange, 400, "\u5165\u529b\u5185\u5bb9\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044"); return; }
+        if (dueDate == null) dueDate = "";
+        try { if (!dueDate.isBlank()) LocalDate.parse(dueDate); }
+        catch (Exception e) { sendText(exchange, 400, "\u5165\u529b\u5185\u5bb9\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044"); return; }
+        String completedDate = editing ? partText(parts, "completedDate") : "";
+        String amountText = editing ? partText(parts, "completedAmount") : "";
+        if (completedDate == null) completedDate = "";
+        Long completedAmount = parseOptionalAmount(amountText);
+        if (amountText != null && !amountText.isBlank() && completedAmount == null) { sendText(exchange, 400, "\u5165\u529b\u5185\u5bb9\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044"); return; }
+        try { if (!completedDate.isBlank()) LocalDate.parse(completedDate); }
+        catch (Exception e) { sendText(exchange, 400, "\u5165\u529b\u5185\u5bb9\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044"); return; }
+        if (completedDate.isBlank()) completedAmount = null;
         byte[] image = parts.get("image");
         if (image != null && image.length == 0) image = null;
-        if (idText == null || !idText.matches("[0-9]{1,10}")) { sendText(exchange, 400, "Invalid item id"); return; }
-        int id = Integer.parseInt(idText), categoryId = Integer.parseInt(categoryText);
-        if (categories.stream().noneMatch(c -> c.id == categoryId)) { sendText(exchange, 400, "カテゴリーが不正です"); return; }
-        Long budget = parseOptionalAmount(budgetText), completedAmount = parseOptionalAmount(amountText);
-        if (budgetText != null && !budgetText.isBlank() && budget == null || amountText != null && !amountText.isBlank() && completedAmount == null) { sendText(exchange, 400, "金額は0以上の整数で入力してください"); return; }
-        if (completedDate == null) completedDate = "";
-        try { if (!completedDate.isBlank()) LocalDate.parse(completedDate); if (dueDate != null && !dueDate.isBlank()) LocalDate.parse(dueDate); }
-        catch (Exception e) { sendText(exchange, 400, "日付を確認してください"); return; }
-        if (completedDate.isBlank()) completedAmount = null;
-        if (image != null && (image.length > MAX_IMAGE_BYTES || !validImageContent(body, image))) { sendText(exchange, image.length > MAX_IMAGE_BYTES ? 413 : 415, "JPEG、PNG、WebP画像のみ使用できます（5MB以下）"); return; }
-        String oldPath;
-        try (PreparedStatement select = connection.prepareStatement("SELECT image_path FROM todos WHERE id = ?")) {
-            select.setInt(1, id); try (ResultSet row = select.executeQuery()) { if (!row.next()) { sendText(exchange, 404, "項目が見つかりません"); return; } oldPath = row.getString(1); }
+        if (image != null && (image.length > MAX_IMAGE_BYTES || !validImageContent(body, image))) { sendText(exchange, image.length > MAX_IMAGE_BYTES ? 413 : 415, "Only JPEG, PNG, or WebP images up to 5MB are accepted."); return; }
+
+        String oldPath = null;
+        if (editing) {
+            try (PreparedStatement select = connection.prepareStatement("SELECT image_path FROM todos WHERE id = ?")) {
+                select.setInt(1, id);
+                try (ResultSet row = select.executeQuery()) { if (!row.next()) { sendText(exchange, 404, "\u9805\u76ee\u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093"); return; } oldPath = row.getString(1); }
+            }
         }
-        boolean removeImage = "on".equals(partText(parts, "removeImage"));
-        String newPath = oldPath;
+        boolean removeImage = editing && "on".equals(partText(parts, "removeImage"));
+        String newPath = editing ? oldPath : null;
         Path temp = null, destination = null;
         if (image != null) {
-            String extension = detectImageExtension(image), filename = UUID.randomUUID() + "." + extension;
+            String filename = UUID.randomUUID() + "." + detectImageExtension(image);
             destination = UPLOAD_DIR.resolve(filename).normalize();
-        if (!destination.startsWith(UPLOAD_DIR)) { sendText(exchange, 400, "Invalid destination"); return; }
-            temp = Files.createTempFile(UPLOAD_DIR, "edit-", ".tmp"); Files.write(temp, image); newPath = "uploads/wishes/" + filename;
+            if (!destination.startsWith(UPLOAD_DIR)) { sendText(exchange, 400, "\u5165\u529b\u5185\u5bb9\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044"); return; }
+            temp = Files.createTempFile(UPLOAD_DIR, "wish-", ".tmp");
+            Files.write(temp, image);
+            newPath = "uploads/wishes/" + filename;
         } else if (removeImage) newPath = null;
-        boolean moved = false;
+        boolean moved = false, transactionStarted = false;
         try {
-            connection.setAutoCommit(false);
+            connection.setAutoCommit(false); transactionStarted = true;
             if (temp != null) { Files.move(temp, destination, StandardCopyOption.ATOMIC_MOVE); moved = true; }
-            try (PreparedStatement update = connection.prepareStatement("UPDATE todos SET title = ?, category_id = ?, due_date = ?, budget = ?, done = ?, completed_date = ?, completed_amount = ?, image_path = ? WHERE id = ?")) {
-                update.setString(1, title.trim()); update.setInt(2, categoryId); update.setString(3, dueDate == null ? "" : dueDate);
-                if (budget == null) update.setNull(4, Types.INTEGER); else update.setLong(4, budget);
-                boolean done = !completedDate.isBlank(); update.setInt(5, done ? 1 : 0);
-                if (done) update.setString(6, completedDate); else update.setNull(6, Types.VARCHAR);
-                if (completedAmount == null) update.setNull(7, Types.INTEGER); else update.setLong(7, completedAmount);
-                if (newPath == null) update.setNull(8, Types.VARCHAR); else update.setString(8, newPath);
-                update.setInt(9, id); if (update.executeUpdate() != 1) throw new SQLException("item update failed");
+            boolean done = editing && !completedDate.isBlank();
+            String sql = editing
+                ? "UPDATE todos SET title=?, category_id=?, due_date=?, budget=?, done=?, completed_date=?, completed_amount=?, image_path=? WHERE id=?"
+                : "INSERT INTO todos (title, done, due_date, budget, completed_date, completed_amount, category_id, image_path) VALUES (?,0,?,?,NULL,NULL,?,?)";
+            try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                statement.setString(1, title.trim());
+                if (editing) {
+                    statement.setInt(2, categoryId); statement.setString(3, dueDate);
+                    if (budget == null) statement.setNull(4, Types.INTEGER); else statement.setLong(4, budget);
+                    statement.setInt(5, done ? 1 : 0);
+                    if (done) statement.setString(6, completedDate); else statement.setNull(6, Types.VARCHAR);
+                    if (completedAmount == null) statement.setNull(7, Types.INTEGER); else statement.setLong(7, completedAmount);
+                    if (newPath == null) statement.setNull(8, Types.VARCHAR); else statement.setString(8, newPath);
+                    statement.setInt(9, id);
+                    if (statement.executeUpdate() != 1) throw new SQLException("item update failed");
+                } else {
+                    statement.setString(2, dueDate);
+                    if (budget == null) statement.setNull(3, Types.INTEGER); else statement.setLong(3, budget);
+                    statement.setInt(4, categoryId);
+                    if (newPath == null) statement.setNull(5, Types.VARCHAR); else statement.setString(5, newPath);
+                    statement.executeUpdate();
+                }
             }
             connection.commit();
         } catch (Exception e) {
-            connection.rollback(); if (moved) Files.deleteIfExists(destination); sendText(exchange, 500, "保存できませんでした"); return;
-        } finally { connection.setAutoCommit(true); if (temp != null) Files.deleteIfExists(temp); }
-        if (image != null || removeImage) deleteStoredImage(oldPath);
-        redirectHome(exchange);
+            if (transactionStarted) connection.rollback();
+            if (moved) Files.deleteIfExists(destination);
+            sendText(exchange, 500, "\u4fdd\u5b58\u3067\u304d\u307e\u305b\u3093\u3067\u3057\u305f");
+            return;
+        } finally {
+            if (transactionStarted) connection.setAutoCommit(true);
+            if (temp != null) Files.deleteIfExists(temp);
+        }
+        if (editing && (image != null || removeImage)) deleteStoredImage(oldPath);
+        if ("XMLHttpRequest".equals(exchange.getRequestHeaders().getFirst("X-Requested-With"))) {
+            exchange.sendResponseHeaders(204, -1); exchange.close();
+        } else redirectHome(exchange);
     }
-
     static String partText(Map<String, byte[]> parts, String name) { byte[] value = parts.get(name); return value == null ? null : new String(value, StandardCharsets.UTF_8); }
     static Long parseOptionalAmount(String value) { if (value == null || value.isBlank()) return null; try { long amount = Long.parseLong(value); return amount < 0 ? null : amount; } catch (NumberFormatException e) { return null; } }
     static boolean validImageContent(byte[] body, byte[] image) {
