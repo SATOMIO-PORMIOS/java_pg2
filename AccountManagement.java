@@ -174,9 +174,9 @@ final class AccountManagement {
     static String page(String title, AuthSession session, boolean admin, String content) {
         return "<!doctype html><html lang='ja'><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>" + title
             + "</title><link rel='stylesheet' href='/assets/app.css'></head><body class='account-page'><header class='app-header'><h1>" + title
-            + "</h1><form class='logout-form' method='post' action='/logout'>" + csrf(session) + "<button>ログアウト</button></form></header>"
-            + "<nav class='account-nav'><a href='/'>ホーム</a>" + (admin ? "<a href='/admin/users'>ユーザー管理</a>" : "")
-            + "<a href='/account/password'>パスワード変更</a></nav><main>" + content + "</main></body></html>";
+            + "</h1><div class='account-actions'><nav class='account-nav'><a href='/'>ホーム</a>" + (admin ? "<a href='/admin/users'>ユーザー管理</a>" : "")
+            + "<a href='/account/password'>パスワード変更</a></nav><form class='logout-form' method='post' action='/logout'>" + csrf(session)
+            + "<button>ログアウト</button></form></div></header><main>" + content + "</main></body></html>";
     }
 
     static String message(HttpExchange e, String error) {
