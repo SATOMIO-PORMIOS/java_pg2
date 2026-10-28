@@ -6,6 +6,8 @@ import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 // 文字コードを指定して文字列とデータを変換する機能を読み込みます。
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 // HTTP処理で入出力エラーを返すための機能を読み込みます。
 import java.io.IOException;
 // SQLiteとの接続を扱う機能を読み込みます。
@@ -154,21 +156,19 @@ public class App {
                 // トップページにフォームとTodo一覧を表示します。
                 } else if (path.equals("/")) {
                     // 見出し・フォーム・一覧を含むページを組み立てます。
-                    String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>やりたいことリスト</title><link rel='preconnect' href='https://fonts.googleapis.com'><link rel='preconnect' href='https://fonts.gstatic.com' crossorigin><link href='https://fonts.googleapis.com/css2?family=Kaisei+Tokumin&display=swap' rel='stylesheet'><style>body { max-width: 600px; margin: 20px auto; padding: 0 16px; font-size: 16px; font-family: 'Kaisei Tokumin', 'Courier New', monospace; }ul { list-style: none; padding-left: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; } li.note { background: #fff3a6; padding: 18px; min-height: 110px; display: flex; flex-direction: column; box-shadow: 2px 4px 8px #0002; transform: rotate(-1deg); } li.note.done { background: #f7c6d0; } .complete-date { width: 34px; height: 34px; padding: 2px; border: 0; background: transparent; color: transparent; cursor: pointer; } .complete-date::-webkit-calendar-picker-indicator { cursor: pointer; } .delete-icon { text-decoration: none; font-size: 20px; } .note-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: auto; }</style></head><body><h1>やりたいことリスト</h1><form method='post' action='/add'><input name='todo'><input type='date' name='dueDate'><input type='number' name='budget' min='0' step='1' placeholder='予算'><button>追加</button></form>";
+                    String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>やりたいことリスト</title><link rel='preconnect' href='https://fonts.googleapis.com'><link rel='preconnect' href='https://fonts.gstatic.com' crossorigin><link href='https://fonts.googleapis.com/css2?family=Yusei+Magic&display=swap' rel='stylesheet'><style>body { max-width: 1000px; margin: 20px auto; padding: 0 16px; font-size: 16px; font-family: 'Yusei Magic', 'Courier New', monospace; }ul.todo-list { list-style: none; padding-left: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; } li.note { background: #fff3a6; padding: 18px; min-height: 110px; display: flex; flex-direction: column; box-shadow: 2px 4px 8px #0002; transform: rotate(-1deg); } li.note.done { background: #f7c6d0; } .calendar-button { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 50%; background: transparent; font-size: 19px; cursor: pointer; } .icon-image { width: 16px; height: 16px; object-fit: contain; vertical-align: middle; } .complete-date { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; } .delete-icon { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%; background: transparent; text-decoration: none; font-size: 17px; transition: transform 150ms ease, background 150ms ease; } .delete-icon:hover { background: #ffc8d5; transform: scale(1.08); } .note-details { font-size: 13px; } .note-actions { font-size: 13px; } .note-id { font-size: 11px; } .note-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: auto; }</style></head><body><h1>やりたいことリスト</h1><form method='post' action='/add'><input name='todo'><input type='date' name='dueDate'><input type='number' name='budget' min='0' step='1' placeholder='予算'><button>追加</button></form>";
                     // Todoがない場合は案内を表示します。
-                    if (todos.isEmpty()) {
-                        html += "<p>やることを探しましょう</p>";
-                    }
-                    // 完了済みTodoの数を数えます。
+                    // Todoがない場合は案内を表示します。
+                    if (todos.isEmpty()) { html += "<p>やることを探しましょう</p>"; }
+                    // 全Todoの完了率と未完了予算を計算します。
                     int completedCount = 0;
+                    long pendingBudgetTotal = 0;
                     for (Todo todo : todos) {
-                        if (todo.isDone()) {
-                            completedCount++;
-                        }
+                        if (todo.isDone()) { completedCount++; }
+                        else if (!todo.getBudget().isEmpty()) { pendingBudgetTotal += Long.parseLong(todo.getBudget()); }
                     }
-                    // Todo全体に対する完了率を計算して表示します。
                     int completionPercent = todos.isEmpty() ? 0 : completedCount * 100 / todos.size();
-                    html += "<p>完了率: " + completionPercent + "%</p><ul>";
+                    html += "<p>完了率: " + completionPercent + "%　未完了の予算合計: " + String.format("%,d", pendingBudgetTotal) + "円</p><ul class='todo-list'>";
                     // Todoを1件ずつページへ追加します。
                     int number = 1;
                     for (Todo todo : todos) {
@@ -181,13 +181,11 @@ public class App {
                         }
                         // Todoの番号・題名・予定日・予算・完了情報・操作リンクを一覧へ足します。
                         String budgetText = todo.getBudget().isEmpty() ? "未設定" : String.format("%,d", Long.parseLong(todo.getBudget())) + "円";
-                        html += "<li class='note " + (todo.isDone() ? "done" : "pending") + "'><div>" + number + ". " + todo.getTitle() + "<br>（予定日: " + todo.getDueDate() + "、予算: " + budgetText + "）" + completedText + "</div><div class='note-actions'><span>" + todo.getId() + "</span><input title='完了日をカレンダーから選択' aria-label='完了日をカレンダーから選択' class='complete-date' type='date' data-id='" + todo.getId() + "' data-original='" + todo.getCompletedDate() + "' value='" + todo.getCompletedDate() + "'> <a href='/delete?id=" + todo.getId() + "' title='削除' aria-label='削除' class='delete-icon'>🗑</a></div></li>";
+                        html += "<li class='note " + (todo.isDone() ? "done" : "pending") + "'><div><span>" + number + ". " + todo.getTitle() + "</span><div class='note-details'>（予定日: " + todo.getDueDate() + "、予算: " + budgetText + "）" + completedText + "</div></div><div class='note-actions'><label class='calendar-button' title='完了日をカレンダーから選択'><img src='/assets/calendar.png' alt='' class='icon-image'><input aria-label='完了日をカレンダーから選択' class='complete-date' type='date' data-id='" + todo.getId() + "' data-original='" + todo.getCompletedDate() + "' value='" + todo.getCompletedDate() + "'></label> <a href='/delete?id=" + todo.getId() + "' title='削除' aria-label='削除' class='delete-icon' onclick=\"return confirm('この項目を削除してもよろしいですか？');\"><img src='/assets/trash.png' alt='' class='icon-image'></a><span class='note-id'>ID " + todo.getId() + "</span></div></li>";
                         number++;
                     }
-                    // Todo一覧とページを閉じます。
-                    html += "</ul><script>document.querySelectorAll('.complete-date').forEach(input => { input.addEventListener('change', () => { const previous = input.dataset.original; const date = input.value; const save = amount => { location.href = '/done?id=' + input.dataset.id + '&date=' + encodeURIComponent(date) + '&amount=' + encodeURIComponent(amount); }; if (date) { const amount = prompt('完了金額を入力してください', ''); if (amount === null) { input.value = previous; return; } save(amount); } else { save(''); } }); });</script></body></html>"; // ★ 日付の選択・消去で完了状態を変更
-                    // HTMLとUTF-8をブラウザに伝えます。
-                    exchange.getResponseHeaders().set("Content-Type", "text/html; charset=UTF-8");
+                    // Todo一覧を閉じます。
+                    html += "</ul>";
                     // ページをUTF-8のデータに変換します。
                     byte[] responseBody = html.getBytes("UTF-8");
                     // 正常応答（200）とデータの長さを送ります。
@@ -214,6 +212,22 @@ public class App {
             } catch (SQLException e) { // ★ SQLエラーをHTTP入出力エラーとして渡します。
                 throw new IOException(e); // ★ SQLエラー処理
             }
+        });
+        // カレンダーアイコン画像を配信します。
+        server.createContext("/assets/calendar.png", exchange -> {
+            byte[] icon = Files.readAllBytes(Path.of("assets/calendar.png"));
+            exchange.getResponseHeaders().set("Content-Type", "image/png");
+            exchange.sendResponseHeaders(200, icon.length);
+            exchange.getResponseBody().write(icon);
+            exchange.close();
+        });
+        // ゴミ箱アイコン画像を配信します。
+        server.createContext("/assets/trash.png", exchange -> {
+            byte[] icon = Files.readAllBytes(Path.of("assets/trash.png"));
+            exchange.getResponseHeaders().set("Content-Type", "image/png");
+            exchange.sendResponseHeaders(200, icon.length);
+            exchange.getResponseBody().write(icon);
+            exchange.close();
         });
         // サーバーの待ち受けを始めます。
         server.start();
